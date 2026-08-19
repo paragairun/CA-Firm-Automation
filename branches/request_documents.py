@@ -1,20 +1,21 @@
 """
 BRANCH 4 — Request Documents (Partner-initiated)
 Use Case 2a: partner/system POSTs { client_id, compliance_type, documents:[...] }
--> creates Pending rows in documents_tracker + sends an AI-drafted request via
+-> creates Pending rows in Documents_Tracker + sends an AI-drafted request via
 WhatsApp+Email.
 
 Call this from another workflow, an internal tool, or manually via curl/Postman
 whenever a new compliance task starts and documents are needed.
 """
 import time
+from datetime import datetime
 
 import config
-from db import fetch_one, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
+from services.gmail_service import send_email
+from services.sheets_db import CLIENTS, DOCUMENTS_TRACKER
 
 
 def validate_payload(body: dict) -> dict:
@@ -35,26 +36,25 @@ def handle_request_documents(body: dict) -> tuple[dict, int]:
     if not payload["valid"]:
         return {"error": "bad_request", "message": "client_id and non-empty documents[] required"}, 400
 
-    client = fetch_one("SELECT * FROM clients WHERE client_id = %s", (payload["client_id"],)) or {}
+    client = CLIENTS.find_one("client_id", payload["client_id"]) or {}
     client_name = client.get("name", "Client")
     phone = client.get("phone", "")
     email = client.get("email", "")
 
     for idx, doc_name in enumerate(payload["documents"]):
-        execute(
-            "INSERT INTO documents_tracker "
-            "(doc_id, client_id, client_name, phone, email, compliance_type, document_name, "
-            "requested_date, status, followup_count) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, now(), 'Pending', 0)",
-            (
-                f"DOC-{int(time.time() * 1000)}-{idx}",
-                payload["client_id"],
-                client_name,
-                phone,
-                email,
-                payload["compliance_type"],
-                doc_name,
-            ),
+        DOCUMENTS_TRACKER.append(
+            {
+                "doc_id": f"DOC-{int(time.time() * 1000)}-{idx}",
+                "client_id": payload["client_id"],
+                "client_name": client_name,
+                "phone": phone,
+                "email": email,
+                "compliance_type": payload["compliance_type"],
+                "document_name": doc_name,
+                "requested_date": datetime.now().isoformat(),
+                "status": "Pending",
+                "followup_count": 0,
+            }
         )
 
     doc_list = "\n".join(f"{i + 1}. {d}" for i, d in enumerate(payload["documents"]))

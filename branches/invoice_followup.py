@@ -2,20 +2,20 @@
 BRANCH 9 — Invoice / Payment Follow-up
 Use Case 5 (reminders half): unpaid invoices get staged reminders (3d
 upcoming / due today / 1-7d / 8-15d / 15d+) with escalating tone. >15 days
-overdue auto-flags escalated + pings the partner on Telegram.
+overdue auto-flags escalated + pings the partner on Google Chat.
 
 Runs daily at 10:30 AM. Pairs with Branch 5 (Payment Confirmation) which
 marks invoices Paid and stops these reminders.
 """
-from datetime import date
+from datetime import date, datetime
 
 import config
-from db import fetch_all, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
-from services.telegram_service import notify_partner
+from services.gmail_service import send_email
+from services.google_chat_service import notify_partner
+from services.sheets_db import INVOICES
 
 
 def _overdue_days(due_date) -> int | None:
@@ -54,7 +54,7 @@ _STAGE_HINTS = {
 
 @catch_and_log("Daily 1030AM - Invoice Followup")
 def run() -> None:
-    for row in fetch_all("SELECT * FROM invoices"):
+    for row in INVOICES.all_rows():
         if row["status"] == "Paid":
             continue
         overdue_days = _overdue_days(row["due_date"])
@@ -89,10 +89,15 @@ def _process_one(row: dict, overdue_days: int, stage: str) -> None:
     new_status = "Overdue" if days_overdue > 0 else "Pending"
     new_escalated = "Yes" if days_overdue > 15 else (row.get("escalated") or "No")
 
-    execute(
-        "UPDATE invoices SET status = %s, reminder_count = reminder_count + 1, "
-        "last_reminder_date = now(), escalated = %s WHERE invoice_id = %s",
-        (new_status, new_escalated, row["invoice_id"]),
+    INVOICES.update_by(
+        "invoice_id",
+        row["invoice_id"],
+        {
+            "status": new_status,
+            "reminder_count": row["reminder_count"] + 1,
+            "last_reminder_date": datetime.now().isoformat(),
+            "escalated": new_escalated,
+        },
     )
 
     if days_overdue > 15:

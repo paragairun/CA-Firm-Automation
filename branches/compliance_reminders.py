@@ -1,19 +1,21 @@
 """
 BRANCH 6 — Compliance Deadline & Reminder System
 Use Case 3: GST/ITR/TDS/ROC deadlines -> reminders at 7d/3d/1d/due-today/overdue,
-tone escalates automatically. Overdue >3 days pings the partner on Telegram.
+tone escalates automatically. Overdue >3 days pings the partner on Google Chat.
+Every non-Filed row is also synced to a real Google Calendar event.
 
 Runs daily at 9:00 AM (SCHEDULER_TIMEZONE).
 """
-from datetime import date
+from datetime import date, datetime
 
 import config
-from db import fetch_all, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
-from services.telegram_service import notify_partner
+from services.gmail_service import send_email
+from services.google_chat_service import notify_partner
+from services.calendar_service import sync_compliance_event
+from services.sheets_db import COMPLIANCE_CALENDAR
 
 
 def _days_diff(due_date) -> int | None:
@@ -52,9 +54,12 @@ _STAGE_HINTS = {
 
 @catch_and_log("Daily 9AM - Compliance Check")
 def run() -> None:
-    for row in fetch_all("SELECT * FROM compliance_calendar"):
+    for row in COMPLIANCE_CALENDAR.all_rows():
         if row["status"] == "Filed" or not row["due_date"]:
             continue
+
+        _sync_calendar(row)
+
         days = _days_diff(row["due_date"])
         if days is None:
             continue
@@ -63,6 +68,13 @@ def run() -> None:
             continue
 
         _process_one(row, days, stage)
+
+
+@catch_and_log("Sync Compliance Calendar Event")
+def _sync_calendar(row: dict) -> None:
+    event_id = sync_compliance_event(row)
+    if event_id and event_id != row.get("calendar_event_id"):
+        COMPLIANCE_CALENDAR.update_by("compliance_id", row["compliance_id"], {"calendar_event_id": event_id})
 
 
 @catch_and_log("Compliance Reminder Row")
@@ -84,10 +96,10 @@ def _process_one(row: dict, days: int, stage: str) -> None:
     if row.get("email"):
         send_email(row["email"], f"{row['compliance_type']} due {row['due_date']} — reminder", message)
 
-    execute(
-        "UPDATE compliance_calendar SET reminder_count = reminder_count + 1, last_reminder_date = now() "
-        "WHERE compliance_id = %s",
-        (row["compliance_id"],),
+    COMPLIANCE_CALENDAR.update_by(
+        "compliance_id",
+        row["compliance_id"],
+        {"reminder_count": row["reminder_count"] + 1, "last_reminder_date": datetime.now().isoformat()},
     )
 
     if days_overdue > 3:

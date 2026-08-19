@@ -6,19 +6,22 @@ Use Cases: 1 (Support), 2b (Document Receipt), 4 (Lead Qualification)
 2. POST messages are ACKed instantly (fast 200), then routed in a background
    thread:
    - Known client + text  -> Support Agent (uses live compliance/doc context)
-   - Known client + media -> mark pending document Received
+   - Known client + media -> download from WhatsApp, save to Drive, mark
+     the matched pending document Received
    - Unknown number       -> Lead Qualification Agent + auto-scoring
 """
 import logging
 import threading
 import time
+from datetime import datetime, timedelta
 
 import config
-from db import fetch_all, fetch_one, upsert_by, execute
 from error_handling import catch_and_log
 from services.llm import agent_reply, draft, parse_json_block
-from services.telegram_service import notify_partner
-from services.whatsapp import send_whatsapp_message
+from services.google_chat_service import notify_partner
+from services.whatsapp import send_whatsapp_message, download_media
+from services.drive_service import upload_client_document
+from services.sheets_db import DOCUMENTS_TRACKER, LEADS
 from branches._shared import match_client_by_phone, build_client_context_summary, log_query
 
 log = logging.getLogger("branch1_whatsapp")
@@ -64,13 +67,17 @@ def _parse_payload(body: dict) -> dict:
     msg = messages[0]
     contact = contacts[0] if contacts else {}
     msg_type = msg.get("type", "text")
-    text_body, media_id, media_caption = "", "", ""
+    text_body, media_id, media_caption, media_filename = "", "", "", ""
 
     if msg_type == "text":
         text_body = (msg.get("text") or {}).get("body", "")
-    elif msg_type in ("image", "document"):
-        media_id = (msg.get(msg_type) or {}).get("id", "")
-        media_caption = (msg.get(msg_type) or {}).get("caption", "")
+    elif msg_type == "document":
+        media_id = (msg.get("document") or {}).get("id", "")
+        media_caption = (msg.get("document") or {}).get("caption", "")
+        media_filename = (msg.get("document") or {}).get("filename", "")
+    elif msg_type == "image":
+        media_id = (msg.get("image") or {}).get("id", "")
+        media_caption = (msg.get("image") or {}).get("caption", "")
     elif msg_type in ("audio", "video", "sticker"):
         media_id = (msg.get(msg_type) or {}).get("id", "")
 
@@ -83,6 +90,7 @@ def _parse_payload(body: dict) -> dict:
         "message_text": text_body,
         "media_id": media_id,
         "media_caption": media_caption,
+        "media_filename": media_filename,
     }
 
 
@@ -106,7 +114,7 @@ def _handle_media_message(parsed: dict) -> None:
     client_name = (client or {}).get("name") or parsed.get("contact_name") or "there"
 
     if not client:
-        # Unknown number sending media — just a generic ack, no lead flow for media.
+        # Unknown number sending media — generic ack only, no lead flow for media.
         send_whatsapp_message(
             from_phone,
             f"Thank you {client_name}, we have received your document. "
@@ -114,15 +122,26 @@ def _handle_media_message(parsed: dict) -> None:
         )
         return
 
-    pending = fetch_one(
-        "SELECT * FROM documents_tracker WHERE client_id = %s AND status = 'Pending' LIMIT 1",
-        (client["client_id"],),
+    client_id = client["client_id"]
+    pending = next(
+        (r for r in DOCUMENTS_TRACKER.all_rows() if r["client_id"] == client_id and r["status"] == "Pending"),
+        None,
     )
+
+    drive_link = ""
+    if parsed.get("media_id"):
+        content, mime_type = download_media(parsed["media_id"])
+        if content:
+            filename = parsed.get("media_filename") or f"{parsed['message_type']}-{int(time.time())}"
+            drive_link = upload_client_document(client_id, client_name, filename, content, mime_type or "application/octet-stream")
+        else:
+            log.warning("Could not download WhatsApp media %s for client %s", parsed["media_id"], client_id)
+
     if pending:
-        execute(
-            "UPDATE documents_tracker SET status = 'Received', received_date = now() WHERE doc_id = %s",
-            (pending["doc_id"],),
-        )
+        updates = {"status": "Received", "received_date": datetime.now().isoformat()}
+        if drive_link:
+            updates["drive_file_link"] = drive_link
+        DOCUMENTS_TRACKER.update_by("doc_id", pending["doc_id"], updates)
         send_whatsapp_message(
             from_phone,
             f"Thank you {client_name}! We have received your {pending['document_name']}. "
@@ -143,8 +162,7 @@ def _handle_lead_qualification(parsed: dict) -> None:
     lead_name = parsed.get("contact_name") or "WhatsApp Lead"
     message_text = parsed["message_text"]
 
-    upsert_by(
-        "leads",
+    LEADS.upsert_by(
         "phone",
         {
             "lead_id": lead_id,
@@ -192,8 +210,7 @@ def _handle_lead_qualification(parsed: dict) -> None:
         raw, {"requirement": "Unclear", "business_type": "Unclear", "urgency": "Unclear", "score": "Warm"}
     )
 
-    upsert_by(
-        "leads",
+    LEADS.upsert_by(
         "phone",
         {
             "phone": from_phone,
@@ -213,14 +230,10 @@ def _handle_lead_qualification(parsed: dict) -> None:
 
 
 def _today_str() -> str:
-    from datetime import datetime
-
     return datetime.now().strftime("%d %b %Y")
 
 
 def _plus_days(n: int) -> str:
-    from datetime import datetime, timedelta
-
     return (datetime.now() + timedelta(days=n)).strftime("%Y-%m-%d")
 
 

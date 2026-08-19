@@ -1,5 +1,5 @@
 """
-Groq (OpenAI-compatible) LLM wrapper.
+Gemini (Google GenAI SDK) LLM wrapper.
 
 Two call shapes, matching the two node types used throughout the original
 n8n workflow:
@@ -15,69 +15,91 @@ n8n workflow:
                                      user + assistant turns.
                                      (was: @n8n/n8n-nodes-langchain.agent +
                                       memoryBufferWindow)
+
+Memory is stored with OpenAI-style roles ("user"/"assistant") in the
+Conversation_Memory sheet, and translated to Gemini's "user"/"model" roles
+only at call time — keeps the sheet contents provider-agnostic if the LLM
+is ever swapped again.
 """
 import json
 import logging
 import re
+import time
 
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 import config
-from db import fetch_all, execute
+from services.sheets_db import CONVERSATION_MEMORY
 
 log = logging.getLogger("llm")
 
-_client = OpenAI(api_key=config.GROQ_API_KEY, base_url=config.GROQ_BASE_URL)
+_client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 
 def draft(prompt: str) -> str:
     """Single-shot, no conversation history. Used for AI-drafted messages
     (reminders, follow-ups, opening replies) and lead classification."""
     try:
-        resp = _client.chat.completions.create(
-            model=config.GROQ_MODEL,
-            temperature=config.GROQ_TEMPERATURE,
-            messages=[{"role": "user", "content": prompt}],
+        resp = _client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=config.GEMINI_TEMPERATURE),
         )
-        return (resp.choices[0].message.content or "").strip()
+        return (resp.text or "").strip()
     except Exception as e:
-        log.error("Groq draft() call failed: %s", e)
+        log.error("Gemini draft() call failed: %s", e)
         return ""
 
 
 def _load_memory(session_key: str) -> list[dict]:
-    rows = fetch_all(
-        "SELECT role, content FROM conversation_memory "
-        "WHERE session_key = %s ORDER BY created_at DESC LIMIT %s",
-        (session_key, config.MEMORY_WINDOW),
-    )
-    rows.reverse()
-    return [{"role": r["role"], "content": r["content"]} for r in rows]
+    # Sheets has no server-side ORDER BY/LIMIT, so filter+sort client-side.
+    # Fine at CA-firm scale; see services/sheets_db.py docstring re: archiving.
+    rows = [r for r in CONVERSATION_MEMORY.all_rows() if r["session_key"] == session_key]
+    rows.sort(key=lambda r: r["created_at"])
+    windowed = rows[-config.MEMORY_WINDOW:]
+    return [{"role": r["role"], "content": r["content"]} for r in windowed]
 
 
 def _save_turn(session_key: str, role: str, content: str) -> None:
-    execute(
-        "INSERT INTO conversation_memory (session_key, role, content) VALUES (%s, %s, %s)",
-        (session_key, role, content),
+    CONVERSATION_MEMORY.append(
+        {
+            "id": f"{session_key}-{int(time.time() * 1000)}",
+            "session_key": session_key,
+            "role": role,
+            "content": content,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
     )
+
+
+def _to_gemini_contents(history: list[dict], user_message: str) -> list[types.Content]:
+    contents = []
+    for turn in history:
+        role = "model" if turn["role"] == "assistant" else "user"
+        contents.append(types.Content(role=role, parts=[types.Part(text=turn["content"])]))
+    contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
+    return contents
 
 
 def agent_reply(session_key: str, system_message: str, user_message: str) -> str:
     """Stateful chat reply, windowed by session_key (e.g. 'wa-support-<phone>',
     'wa-lead-<phone>', 'email-support-<email>')."""
     history = _load_memory(session_key)
-    messages = [{"role": "system", "content": system_message}] + history + [
-        {"role": "user", "content": user_message}
-    ]
+    contents = _to_gemini_contents(history, user_message)
+
     try:
-        resp = _client.chat.completions.create(
-            model=config.GROQ_MODEL,
-            temperature=config.GROQ_TEMPERATURE,
-            messages=messages,
+        resp = _client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_message,
+                temperature=config.GEMINI_TEMPERATURE,
+            ),
         )
-        output = (resp.choices[0].message.content or "").strip()
+        output = (resp.text or "").strip()
     except Exception as e:
-        log.error("Groq agent_reply() call failed: %s", e)
+        log.error("Gemini agent_reply() call failed: %s", e)
         output = "Sorry, I'm having trouble responding right now — a member of our team will follow up with you shortly."
 
     _save_turn(session_key, "user", user_message)

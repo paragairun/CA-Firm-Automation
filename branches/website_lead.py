@@ -8,13 +8,13 @@ Expects POST JSON body: { name, phone, email, message, source }
 import time
 from datetime import datetime, timedelta
 
-from db import upsert_by
 from error_handling import catch_and_log
 import config
 from services.llm import draft, parse_json_block
-from services.telegram_service import notify_partner
+from services.google_chat_service import notify_partner
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
+from services.gmail_service import send_email
+from services.sheets_db import LEADS
 
 
 def validate_payload(body: dict) -> dict:
@@ -40,8 +40,7 @@ def handle_website_lead(body: dict) -> tuple[dict, int]:
         return {"error": "bad_request", "message": "name and (phone or email) required"}, 400
 
     lead_id = f"LEAD-WEB-{int(time.time() * 1000)}"
-    upsert_by(
-        "leads",
+    LEADS.upsert_by(
         "phone" if payload["phone"] else "email",
         {
             "lead_id": lead_id,
@@ -76,12 +75,11 @@ def handle_website_lead(body: dict) -> tuple[dict, int]:
     raw = draft(classify_prompt)
     parsed = parse_json_block(raw, {"requirement": "Unclear", "urgency": "Unclear"})
 
-    upsert_by(
-        "leads",
+    LEADS.upsert_by(
         "phone" if payload["phone"] else "email",
         {
-            "phone": payload["phone"] or None,
-            "email": payload["email"] or None,
+            "phone": payload["phone"] or "",
+            "email": payload["email"] or "",
             "requirement": parsed.get("requirement", "Unclear"),
             "urgency": parsed.get("urgency", "Unclear"),
             "status": "Qualifying",

@@ -9,11 +9,11 @@ cash/cheque payment is recorded.
 from datetime import datetime
 
 import config
-from db import fetch_one, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
+from services.gmail_service import send_email
+from services.sheets_db import INVOICES
 
 
 def validate_payload(body: dict) -> dict:
@@ -32,13 +32,13 @@ def handle_payment_confirmation(body: dict) -> tuple[dict, int]:
     if not payload["valid"]:
         return {"error": "bad_request", "message": "invoice_id required"}, 400
 
-    invoice = fetch_one("SELECT * FROM invoices WHERE invoice_id = %s", (payload["invoice_id"],))
+    invoice = INVOICES.find_one("invoice_id", payload["invoice_id"])
     if not invoice:
         # Mirrors original: no further branch fires when the invoice isn't found,
         # but the webhook still acks 200 (payload itself was valid).
         return {"status": "received"}, 200
 
-    execute("UPDATE invoices SET status = 'Paid' WHERE invoice_id = %s", (payload["invoice_id"],))
+    INVOICES.update_by("invoice_id", payload["invoice_id"], {"status": "Paid"})
 
     prompt = (
         f"Write a short, warm thank-you message (WhatsApp/email friendly, 2-4 lines) from "

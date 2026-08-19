@@ -9,11 +9,11 @@ Runs daily at 10:00 AM.
 from datetime import date, timedelta
 
 import config
-from db import fetch_all, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
+from services.gmail_service import send_email
+from services.sheets_db import LEADS
 
 _CLOSED_STATUSES = {"Converted", "Lost", "Cold-Closed"}
 
@@ -21,14 +21,17 @@ _CLOSED_STATUSES = {"Converted", "Lost", "Cold-Closed"}
 @catch_and_log("Daily 10AM - Lead Followup")
 def run() -> None:
     today = date.today()
-    for row in fetch_all("SELECT * FROM leads"):
+    for row in LEADS.all_rows():
         if row.get("status") in _CLOSED_STATUSES:
             continue
         followup_date = row.get("followup_date")
         if not followup_date:
             continue
         if isinstance(followup_date, str):
-            followup_date = date.fromisoformat(followup_date[:10])
+            try:
+                followup_date = date.fromisoformat(followup_date[:10])
+            except ValueError:
+                continue
         if followup_date > today:
             continue
         _process_one(row)
@@ -55,10 +58,11 @@ def _process_one(row: dict) -> None:
 
     new_attempts = attempts + 1
     max_reached = new_attempts >= 4
-    next_followup = None if max_reached else (date.today() + timedelta(days=3)).isoformat()
+    next_followup = "" if max_reached else (date.today() + timedelta(days=3)).isoformat()
     new_status = "Cold-Closed" if max_reached else row.get("status")
 
-    execute(
-        "UPDATE leads SET followup_attempts = %s, followup_date = %s, status = %s WHERE lead_id = %s",
-        (new_attempts, next_followup, new_status, row["lead_id"]),
+    LEADS.update_by(
+        "lead_id",
+        row["lead_id"],
+        {"followup_attempts": new_attempts, "followup_date": next_followup, "status": new_status},
     )

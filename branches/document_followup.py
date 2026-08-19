@@ -1,6 +1,6 @@
 """
 BRANCH 7 — Document Follow-up
-Use Case 2c: any 'Pending' row in documents_tracker not followed-up in 3+ days
+Use Case 2c: any 'Pending' row in Documents_Tracker not followed-up in 3+ days
 gets an AI-drafted reminder (tone escalates by attempt). 3rd+ follow-up pings
 the partner.
 
@@ -9,12 +9,12 @@ Runs daily at 9:30 AM.
 from datetime import datetime
 
 import config
-from db import fetch_all, execute
 from error_handling import catch_and_log
 from services.llm import draft
 from services.whatsapp import send_whatsapp_message
-from services.email_service import send_email
-from services.telegram_service import notify_partner
+from services.gmail_service import send_email
+from services.google_chat_service import notify_partner
+from services.sheets_db import DOCUMENTS_TRACKER
 
 
 def _days_since(dt) -> int | None:
@@ -25,16 +25,12 @@ def _days_since(dt) -> int | None:
             dt = datetime.fromisoformat(dt)
         except ValueError:
             return None
-    if dt.tzinfo is not None:
-        now = datetime.now(dt.tzinfo)
-    else:
-        now = datetime.now()
-    return (now - dt).days
+    return (datetime.now() - dt).days
 
 
 @catch_and_log("Daily 930AM - Document Followup")
 def run() -> None:
-    for row in fetch_all("SELECT * FROM documents_tracker"):
+    for row in DOCUMENTS_TRACKER.all_rows():
         if row["status"] != "Pending":
             continue
         ref_date = row.get("last_followup_date") or row.get("requested_date")
@@ -63,10 +59,10 @@ def _process_one(row: dict) -> None:
     if row.get("email"):
         send_email(row["email"], f"Reminder: {row['document_name']} needed", message)
 
-    execute(
-        "UPDATE documents_tracker SET followup_count = followup_count + 1, last_followup_date = now() "
-        "WHERE doc_id = %s",
-        (row["doc_id"],),
+    DOCUMENTS_TRACKER.update_by(
+        "doc_id",
+        row["doc_id"],
+        {"followup_count": followup_count + 1, "last_followup_date": datetime.now().isoformat()},
     )
 
     if followup_count + 1 >= 3:

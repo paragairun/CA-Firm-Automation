@@ -2,18 +2,19 @@
 BRANCH 3 — Email Query Support
 Use Case 1 (email channel) + Use Case 4 (email leads)
 
-Polls Gmail every GMAIL_POLL_SECONDS for unread mail. Known-client senders
-get the same AI Support Agent (with live compliance/doc context) used on
-WhatsApp. Unknown senders get logged as a new Lead + an AI opening reply.
+Polls Gmail (via Gmail API) every GMAIL_POLL_SECONDS for unread mail not
+yet labelled processed. Known-client senders get the same AI Support Agent
+(with live compliance/doc context) used on WhatsApp. Unknown senders get
+logged as a new Lead + an AI opening reply.
 """
 import time
 from datetime import datetime, timedelta
 
-from db import upsert_by
 from error_handling import catch_and_log
 import config
-from services.email_service import fetch_unread_emails, send_email
+from services.gmail_service import fetch_unread_emails, send_email
 from services.llm import agent_reply, draft
+from services.sheets_db import LEADS
 from branches._shared import match_client_by_email, build_client_context_summary, log_query
 
 
@@ -43,8 +44,7 @@ def _process_one(msg: dict) -> None:
     else:
         client_name = sender_email.split("@")[0] or "there"
         lead_id = f"LEAD-EMAIL-{int(time.time() * 1000)}"
-        upsert_by(
-            "leads",
+        LEADS.upsert_by(
             "email",
             {
                 "lead_id": lead_id,

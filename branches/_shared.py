@@ -1,24 +1,25 @@
 """
 Shared helpers used by more than one branch — client matching and the
-compliance/document context summary fed to the AI support agent.
-Kept identical in behaviour to the original workflow's duplicated
+compliance/document context summary fed to the AI support agent. Kept
+identical in behaviour to the original workflow's duplicated
 "Match Client by Phone/Email" and "Build Client Context Summary" code nodes.
 """
 import re
+import time
 from datetime import datetime
 
-from db import fetch_all
 import config
+from services.sheets_db import CLIENTS, COMPLIANCE_CALENDAR, DOCUMENTS_TRACKER, QUERY_LOG
 
 
 def match_client_by_phone(from_phone: str) -> dict | None:
-    """Loose match: original workflow compared digit-only phone numbers,
-    allowing either side to be a suffix of the other (handles country-code
-    prefix mismatches like +91 vs 91 vs no prefix)."""
+    """Loose match: compares digit-only phone numbers, allowing either side
+    to be a suffix of the other (handles country-code prefix mismatches
+    like +91 vs 91 vs no prefix)."""
     digits = re.sub(r"\D", "", from_phone or "")
     if not digits:
         return None
-    for row in fetch_all("SELECT * FROM clients"):
+    for row in CLIENTS.all_rows():
         p = re.sub(r"\D", "", row.get("phone") or "")
         if p and (p == digits or p.endswith(digits) or digits.endswith(p)):
             return row
@@ -29,7 +30,7 @@ def match_client_by_email(sender_email: str) -> dict | None:
     email_l = (sender_email or "").strip().lower()
     if not email_l:
         return None
-    for row in fetch_all("SELECT * FROM clients"):
+    for row in CLIENTS.all_rows():
         if (row.get("email") or "").strip().lower() == email_l:
             return row
     return None
@@ -39,14 +40,8 @@ def build_client_context_summary(client_id: str, client_name: str) -> str:
     """Builds the system-prompt context block used by both the WhatsApp and
     Email support agents: this client's compliance calendar + document
     status, and nothing else (never leaks other clients' data)."""
-    compliance_rows = fetch_all(
-        "SELECT compliance_type, due_date, status FROM compliance_calendar WHERE client_id = %s",
-        (client_id,),
-    )
-    doc_rows = fetch_all(
-        "SELECT document_name, compliance_type, status FROM documents_tracker WHERE client_id = %s",
-        (client_id,),
-    )
+    compliance_rows = [r for r in COMPLIANCE_CALENDAR.all_rows() if r["client_id"] == client_id]
+    doc_rows = [r for r in DOCUMENTS_TRACKER.all_rows() if r["client_id"] == client_id]
 
     compliance_lines = (
         "\n".join(f"- {r['compliance_type']}: due {r['due_date']}, status {r['status']}" for r in compliance_rows)
@@ -81,11 +76,15 @@ def build_client_context_summary(client_id: str, client_name: str) -> str:
 
 
 def log_query(client_id: str, phone: str, email: str, channel: str, query_text: str, ai_response: str) -> None:
-    import time
-    from db import execute
-
-    execute(
-        "INSERT INTO query_log (log_id, client_id, phone, email, channel, query_text, ai_response, timestamp) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, now())",
-        (f"LOG-{int(time.time() * 1000)}", client_id, phone, email, channel, query_text, ai_response),
+    QUERY_LOG.append(
+        {
+            "log_id": f"LOG-{int(time.time() * 1000)}",
+            "client_id": client_id,
+            "phone": phone,
+            "email": email,
+            "channel": channel,
+            "query_text": query_text,
+            "ai_response": ai_response,
+            "timestamp": datetime.now().isoformat(),
+        }
     )

@@ -9,8 +9,8 @@ import logging
 import time
 import traceback
 
-from db import execute
-from services.telegram_service import notify_partner
+from services.sheets_db import ERROR_LOG
+from services.google_chat_service import notify_partner
 
 log = logging.getLogger("errors")
 
@@ -18,13 +18,17 @@ log = logging.getLogger("errors")
 def log_error(node_name: str, error_message: str, workflow_name: str = "CA Firm Automation") -> None:
     error_id = f"ERR-{int(time.time() * 1000)}"
     try:
-        execute(
-            "INSERT INTO error_log (error_id, workflow_name, node_name, error_message, timestamp) "
-            "VALUES (%s, %s, %s, %s, now())",
-            (error_id, workflow_name, node_name, str(error_message)[:900]),
+        ERROR_LOG.append(
+            {
+                "error_id": error_id,
+                "workflow_name": workflow_name,
+                "node_name": node_name,
+                "error_message": str(error_message)[:900],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
         )
     except Exception:
-        log.error("Failed to write to error_log table (DB may be down): %s", error_message)
+        log.error("Failed to write to Error_Log sheet (Sheets may be unreachable): %s", error_message)
 
     notify_partner(
         f"⚠️ *CA Firm Automation Error*\n"
@@ -37,7 +41,7 @@ def log_error(node_name: str, error_message: str, workflow_name: str = "CA Firm 
 
 def catch_and_log(node_name: str):
     """Decorator: run the wrapped function, and on any exception, log it
-    to error_log + notify the partner on Telegram, then swallow it (so one
+    to error_log + notify the partner on Google Chat, then swallow it (so one
     branch's failure never takes down the webhook response or the scheduler)."""
 
     def decorator(fn):
