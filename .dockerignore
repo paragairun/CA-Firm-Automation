@@ -1,0 +1,10 @@
+.env
+service-account.json
+*.json.key
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+README.md
+deploy/
