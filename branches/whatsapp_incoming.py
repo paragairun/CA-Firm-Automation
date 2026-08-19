@@ -3,15 +3,15 @@ BRANCH 1 — WhatsApp Incoming Router
 Use Cases: 1 (Support), 2b (Document Receipt), 4 (Lead Qualification)
 
 1. Meta sends GET to verify webhook (hub.challenge).
-2. POST messages are ACKed instantly (fast 200), then routed in a background
-   thread:
+2. POST messages are parsed and routed synchronously within the request
+   (see app.py docstring for why — Cloud Run doesn't support the original
+   "fast ack, then process in a background thread" pattern):
    - Known client + text  -> Support Agent (uses live compliance/doc context)
    - Known client + media -> download from WhatsApp, save to Drive, mark
      the matched pending document Received
    - Unknown number       -> Lead Qualification Agent + auto-scoring
 """
 import logging
-import threading
 import time
 from datetime import datetime, timedelta
 
@@ -235,10 +235,3 @@ def _today_str() -> str:
 
 def _plus_days(n: int) -> str:
     return (datetime.now() + timedelta(days=n)).strftime("%Y-%m-%d")
-
-
-def process_async(body: dict) -> None:
-    """Entry point used by the Flask route — runs handle_incoming in a
-    background thread so the webhook can respond to Meta within its
-    timeout window immediately."""
-    threading.Thread(target=handle_incoming, args=(body,), daemon=True).start()

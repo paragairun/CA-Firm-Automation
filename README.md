@@ -34,7 +34,8 @@ error-handling chain.
 | Compliance deadlines | **Google Calendar** — real events with native reminders |
 | Partner alerts | **Google Chat** incoming webhook |
 | WhatsApp | Meta Cloud API (no Google equivalent exists) |
-| Scheduling | APScheduler, in-process |
+| Compute | **Cloud Run** — serverless, request-driven, effectively free at this scale |
+| Scheduling | **Cloud Scheduler** — 5 jobs hitting authenticated `/internal/*` routes (see "Deploying to Cloud Run") |
 
 One Google Cloud service account, authorized for **domain-wide
 delegation** in your Workspace Admin Console, powers Sheets, Gmail,
@@ -42,8 +43,10 @@ Drive, and Calendar together — it impersonates a real mailbox
 (`GOOGLE_IMPERSONATE_EMAIL`) so sent mail, owned files, and calendar
 events all belong to the firm, not to a faceless service account.
 
-Runs as a single long-lived process (systemd), same pattern as the
-trading bot on `padmajak-trading-bot-v2`.
+Runs on Cloud Run: no VM to patch, scales to zero between requests, and
+this app's traffic sits comfortably inside Cloud Run's free tier. A GCP
+VM + systemd path (same pattern as the trading bot on
+`padmajak-trading-bot-v2`) is documented as a fallback option below.
 
 ## Setup
 
@@ -157,7 +160,108 @@ Requires **Python 3.10+** (uses `X | None` type hints).
 python3 app.py
 ```
 
-### 13. Deploy (GCP VM, systemd — same pattern as the trading bot)
+### 13. Deploy — two options
+
+**Option A: Cloud Run (recommended — serverless, effectively free)**
+
+No VM to patch or manage; Cloud Run only runs (and only costs anything)
+while handling a request, and this app's traffic is nowhere near its free
+tier limits.
+
+Enable the extra APIs this path needs:
+
+```bash
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+  cloudscheduler.googleapis.com secretmanager.googleapis.com \
+  --project=YOUR_GCP_PROJECT_ID
+```
+
+Store secrets in Secret Manager (never bake these into the container image):
+
+```bash
+gcloud secrets create ca-firm-sa-key --data-file=service-account.json
+echo -n "YOUR_GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
+echo -n "YOUR_WHATSAPP_ACCESS_TOKEN" | gcloud secrets create whatsapp-access-token --data-file=-
+echo -n "YOUR_WHATSAPP_WEBHOOK_VERIFY_TOKEN" | gcloud secrets create whatsapp-verify-token --data-file=-
+echo -n "YOUR_GOOGLE_CHAT_WEBHOOK_URL" | gcloud secrets create google-chat-webhook --data-file=-
+python3 -c "import secrets; print(secrets.token_urlsafe(32))" | \
+  gcloud secrets create scheduler-shared-secret --data-file=-
+```
+
+(Grab the generated value from that last command's output — you'll pass
+the same string to every Cloud Scheduler job below.)
+
+Build and deploy straight from source (Cloud Build picks up the
+`Dockerfile` automatically):
+
+```bash
+gcloud run deploy ca-firm-automation \
+  --source . \
+  --region=asia-south1 \
+  --allow-unauthenticated \
+  --set-env-vars="FIRM_NAME=Your CA Firm Name,GOOGLE_IMPERSONATE_EMAIL=team@yourfirm.com,GOOGLE_SPREADSHEET_ID=your_sheet_id,GEMINI_MODEL=gemini-3.6-flash,GOOGLE_CALENDAR_ID=primary" \
+  --set-secrets="/secrets/service-account.json=ca-firm-sa-key:latest,GEMINI_API_KEY=gemini-api-key:latest,WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,WHATSAPP_WEBHOOK_VERIFY_TOKEN=whatsapp-verify-token:latest,GOOGLE_CHAT_WEBHOOK_URL=google-chat-webhook:latest,SCHEDULER_SHARED_SECRET=scheduler-shared-secret:latest" \
+  --set-env-vars="GOOGLE_SERVICE_ACCOUNT_FILE=/secrets/service-account.json,WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id"
+```
+
+`--allow-unauthenticated` is required — Meta, your payment gateway, and
+your website need to reach `/webhooks/*` without a GCP identity. The
+`/internal/*` routes are protected at the application layer instead (the
+`X-Internal-Secret` header check in `app.py`).
+
+Grab the deployed URL:
+
+```bash
+SERVICE_URL=$(gcloud run services describe ca-firm-automation --region=asia-south1 --format='value(status.url)')
+echo $SERVICE_URL
+```
+
+Create the 5 Cloud Scheduler jobs (replace `YOUR_SECRET` with the value
+from `scheduler-shared-secret` above):
+
+```bash
+gcloud scheduler jobs create http gmail-poll \
+  --schedule="* * * * *" --uri="$SERVICE_URL/internal/gmail-poll" \
+  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
+  --time-zone="Asia/Kolkata" --location=asia-south1
+
+gcloud scheduler jobs create http compliance-reminders \
+  --schedule="0 9 * * *" --uri="$SERVICE_URL/internal/compliance-reminders" \
+  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
+  --time-zone="Asia/Kolkata" --location=asia-south1
+
+gcloud scheduler jobs create http document-followup \
+  --schedule="30 9 * * *" --uri="$SERVICE_URL/internal/document-followup" \
+  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
+  --time-zone="Asia/Kolkata" --location=asia-south1
+
+gcloud scheduler jobs create http lead-followup \
+  --schedule="0 10 * * *" --uri="$SERVICE_URL/internal/lead-followup" \
+  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
+  --time-zone="Asia/Kolkata" --location=asia-south1
+
+gcloud scheduler jobs create http invoice-followup \
+  --schedule="30 10 * * *" --uri="$SERVICE_URL/internal/invoice-followup" \
+  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
+  --time-zone="Asia/Kolkata" --location=asia-south1
+```
+
+Point Meta's webhook, your payment gateway, and your website form at
+`$SERVICE_URL/webhooks/...` (same paths as before). Test with
+`curl $SERVICE_URL/health`.
+
+**Cost reality check**: Cloud Run itself will sit comfortably inside the
+free tier at this traffic level ($0). Cloud Scheduler gives 3 free jobs
+per billing account per month; this setup needs 5, so expect roughly
+**$0.20/month** for the 2 jobs beyond the free allotment — not literally
+zero, but as close as it gets.
+
+**Behavioural note**: unlike the VM version, the WhatsApp webhook now
+processes each message synchronously (LLM call + Sheets/WhatsApp calls)
+before replying to Meta, instead of ack-then-background-process. Still
+typically a few seconds — see `app.py`'s docstring for the full reasoning.
+
+**Option B: GCP VM (systemd — same pattern as the trading bot)**
 
 ```bash
 # on the VM
@@ -176,7 +280,12 @@ sudo systemctl status ca-firm-automation
 
 Expose it publicly (Nginx reverse proxy + TLS, or a tunnel like the
 existing `parsley-walk-operator.ngrok-free.dev` pattern) so Meta and your
-payment gateway can reach the webhooks.
+payment gateway can reach the webhooks. Note: this VM-path `app.py`
+history (background thread + in-process APScheduler) was superseded by
+the Cloud Run rebuild above — if you go this route instead, you'd want to
+reintroduce that always-on scheduling pattern rather than relying on the
+current request-driven `/internal/*` routes, since nothing will ever call
+them without Cloud Scheduler in the picture.
 
 ## Differences from the original n8n workflow
 
@@ -197,9 +306,14 @@ payment gateway can reach the webhooks.
 - **Partner alerts**: Google Chat webhook instead of a Telegram bot.
 - **LLM**: Gemini (`gemini-3.6-flash` by default, configurable) instead of
   Groq/Llama.
-- **"Fast ack" on the WhatsApp webhook**: reproduced with a background
-  thread (`branches/whatsapp_incoming.process_async`) instead of n8n's
-  `responseNode` + parallel branches.
+- **Compute + scheduling**: Cloud Run (serverless, request-driven) instead
+  of n8n's always-on workflow engine. The original's "fast ack, then
+  process in the background" pattern for the WhatsApp webhook doesn't fit
+  Cloud Run's execution model (background threads aren't reliable once a
+  request finishes), so that branch now processes synchronously within
+  the request instead — see `app.py`'s docstring. The 4 daily jobs run
+  via Cloud Scheduler hitting authenticated `/internal/*` routes rather
+  than an in-process scheduler.
 - Everything else — prompts, reminder-stage thresholds (7d/3d/1d/due-today/
   overdue for compliance; 3d/due-today/1-7d/8-15d/15d+ for invoices;
   3-day gap + escalate-at-3 for documents; 4-attempt cold-close for leads)

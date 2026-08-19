@@ -62,17 +62,21 @@ WHATSAPP_ACCESS_TOKEN = _opt("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = _opt("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
 WHATSAPP_API_VERSION = _opt("WHATSAPP_API_VERSION", "v21.0")
 
-# ── Gmail polling cadence (Gmail API list call, not IMAP) ─────────────────
+# ── Gmail polling cadence — now a reference value only; actual cadence is
+#    set by the Cloud Scheduler job's cron expression (see README). Kept
+#    here since branches/email_support.py's docstring refers to it.
 GMAIL_POLL_SECONDS = int(_opt("GMAIL_POLL_SECONDS", "60"))
 GMAIL_PROCESSED_LABEL = _opt("GMAIL_PROCESSED_LABEL", "CA-Firm-Processed")
 
-# ── Flask ────────────────────────────────────────────────────────────────
-PORT = int(_opt("PORT", "8000"))
+# ── Flask / Cloud Run ──────────────────────────────────────────────────
+PORT = int(_opt("PORT", "8080"))  # Cloud Run injects PORT=8080 by default
 DEBUG = _opt("FLASK_DEBUG", "false").lower() == "true"
 
-# ── Scheduled job times (24h, instance-local timezone; original used IST) ─
-COMPLIANCE_CHECK_HOUR, COMPLIANCE_CHECK_MINUTE = 9, 0
-DOCUMENT_FOLLOWUP_HOUR, DOCUMENT_FOLLOWUP_MINUTE = 9, 30
-LEAD_FOLLOWUP_HOUR, LEAD_FOLLOWUP_MINUTE = 10, 0
-INVOICE_FOLLOWUP_HOUR, INVOICE_FOLLOWUP_MINUTE = 10, 30
+# ── Internal endpoint auth (Cloud Scheduler -> /internal/* routes) ───────
+# Any long random string. Cloud Scheduler jobs send it as the
+# X-Internal-Secret header; see README "Deploying to Cloud Run".
+SCHEDULER_SHARED_SECRET = _req("SCHEDULER_SHARED_SECRET")
+
+# ── Scheduler timezone (informational — set directly on each Cloud
+#    Scheduler job at creation time; see README) ──────────────────────────
 SCHEDULER_TIMEZONE = _opt("SCHEDULER_TIMEZONE", "Asia/Kolkata")

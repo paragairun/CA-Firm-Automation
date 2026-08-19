@@ -1,24 +1,47 @@
 """
-CA Firm Automation Suite — Flask entry point.
+CA Firm Automation Suite — Flask entry point (Cloud Run / serverless).
 
-Routes (mirrors the original n8n workflow's 5 webhooks):
-  GET/POST /webhooks/whatsapp-incoming   Branch 1
-  POST     /webhooks/website-lead        Branch 2
-  POST     /webhooks/request-documents   Branch 4
-  POST     /webhooks/payment-confirmation Branch 5
-  GET      /health                       liveness check
+Public routes (mirrors the original n8n workflow's webhooks):
+  GET/POST /webhooks/whatsapp-incoming     Branch 1
+  POST     /webhooks/website-lead          Branch 2
+  POST     /webhooks/request-documents     Branch 4
+  POST     /webhooks/payment-confirmation  Branch 5
+  GET      /health                         liveness check
 
-Background:
-  - Gmail poller thread (Branch 3), polls every GMAIL_POLL_SECONDS
-  - APScheduler running the 4 daily jobs (Branches 6-9) at 9:00 / 9:30 /
-    10:00 / 10:30 SCHEDULER_TIMEZONE
+Internal routes, triggered by Cloud Scheduler (see README "Deploying to
+Cloud Run" for the exact gcloud commands to create these 5 jobs):
+  POST /internal/gmail-poll            Branch 3 — every minute
+  POST /internal/compliance-reminders  Branch 6 — daily 09:00 IST
+  POST /internal/document-followup     Branch 7 — daily 09:30 IST
+  POST /internal/lead-followup         Branch 8 — daily 10:00 IST
+  POST /internal/invoice-followup      Branch 9 — daily 10:30 IST
+
+All /internal/* routes require a matching 'X-Internal-Secret' header
+(SCHEDULER_SHARED_SECRET) — Cloud Scheduler is configured to send it on
+every call. Public routes stay unauthenticated since Meta, your payment
+gateway, and your website form can't provide that header (WhatsApp has
+its own hub.verify_token handshake instead; a payment-gateway signature
+check would be a sensible future hardening step, not built here).
+
+Why no background threads or in-process scheduler here (unlike the VM
+deployment): Cloud Run can freeze or kill a container's CPU the moment a
+request finishes, so anything relying on a long-lived background thread —
+the old Gmail poll loop, the old APScheduler — is unreliable in this
+environment. Everything here runs synchronously inside a single HTTP
+request/response cycle instead, triggered either by an external webhook
+or by Cloud Scheduler hitting an /internal/* route.
+
+One real behavioural change worth knowing: the WhatsApp webhook used to
+ACK Meta instantly and process the message in a background thread. On
+Cloud Run it processes the message (LLM call + a couple of Sheets/
+WhatsApp API calls) and replies within the same request before returning
+the ack — typically still a few seconds, comfortably inside Meta's
+expected response window, but no longer instant.
 """
+import functools
+import hmac
 import logging
-import threading
-import time
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from flask import Flask, jsonify, request
 
 import config
@@ -34,6 +57,18 @@ log = logging.getLogger("app")
 app = Flask(__name__)
 
 
+def require_scheduler_secret(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        provided = request.headers.get("X-Internal-Secret", "")
+        expected = config.SCHEDULER_SHARED_SECRET
+        if not expected or not hmac.compare_digest(provided, expected):
+            return jsonify({"error": "unauthorized"}), 401
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 # ── Branch 1: WhatsApp Incoming ─────────────────────────────────────────
 @app.route("/webhooks/whatsapp-incoming", methods=["GET", "POST"])
 def whatsapp_incoming_route():
@@ -45,9 +80,7 @@ def whatsapp_incoming_route():
             return jsonify(body), status
         return body, status
 
-    # POST: ack immediately, process in background (matches original's
-    # "fast 200 then route" behaviour).
-    whatsapp_incoming.process_async(request.get_json(force=True, silent=True) or {})
+    whatsapp_incoming.handle_incoming(request.get_json(force=True, silent=True) or {})
     return jsonify({"status": "received"}), 200
 
 
@@ -94,52 +127,42 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
-# ── Branch 3: Gmail poller (background thread) ──────────────────────────
-def _gmail_poll_loop():
-    while True:
-        try:
-            email_support.poll_and_process()
-        except Exception:
-            log.exception("Gmail poll loop error")
-        time.sleep(config.GMAIL_POLL_SECONDS)
+# ── Branch 3 + 6-9: Cloud Scheduler-triggered internal jobs ─────────────
+@app.route("/internal/gmail-poll", methods=["POST"])
+@require_scheduler_secret
+def gmail_poll_route():
+    email_support.poll_and_process()
+    return jsonify({"status": "ok"}), 200
 
 
-# ── Branches 6-9: daily scheduled jobs ───────────────────────────────────
-def _start_scheduler():
-    scheduler = BackgroundScheduler(timezone=config.SCHEDULER_TIMEZONE)
-    scheduler.add_job(
-        compliance_reminders.run,
-        CronTrigger(hour=config.COMPLIANCE_CHECK_HOUR, minute=config.COMPLIANCE_CHECK_MINUTE),
-        id="compliance_reminders",
-    )
-    scheduler.add_job(
-        document_followup.run,
-        CronTrigger(hour=config.DOCUMENT_FOLLOWUP_HOUR, minute=config.DOCUMENT_FOLLOWUP_MINUTE),
-        id="document_followup",
-    )
-    scheduler.add_job(
-        lead_followup.run,
-        CronTrigger(hour=config.LEAD_FOLLOWUP_HOUR, minute=config.LEAD_FOLLOWUP_MINUTE),
-        id="lead_followup",
-    )
-    scheduler.add_job(
-        invoice_followup.run,
-        CronTrigger(hour=config.INVOICE_FOLLOWUP_HOUR, minute=config.INVOICE_FOLLOWUP_MINUTE),
-        id="invoice_followup",
-    )
-    scheduler.start()
-    log.info(
-        "Scheduler started: compliance %02d:%02d, documents %02d:%02d, leads %02d:%02d, invoices %02d:%02d (%s)",
-        config.COMPLIANCE_CHECK_HOUR, config.COMPLIANCE_CHECK_MINUTE,
-        config.DOCUMENT_FOLLOWUP_HOUR, config.DOCUMENT_FOLLOWUP_MINUTE,
-        config.LEAD_FOLLOWUP_HOUR, config.LEAD_FOLLOWUP_MINUTE,
-        config.INVOICE_FOLLOWUP_HOUR, config.INVOICE_FOLLOWUP_MINUTE,
-        config.SCHEDULER_TIMEZONE,
-    )
-    return scheduler
+@app.route("/internal/compliance-reminders", methods=["POST"])
+@require_scheduler_secret
+def compliance_reminders_route():
+    compliance_reminders.run()
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/internal/document-followup", methods=["POST"])
+@require_scheduler_secret
+def document_followup_route():
+    document_followup.run()
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/internal/lead-followup", methods=["POST"])
+@require_scheduler_secret
+def lead_followup_route():
+    lead_followup.run()
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/internal/invoice-followup", methods=["POST"])
+@require_scheduler_secret
+def invoice_followup_route():
+    invoice_followup.run()
+    return jsonify({"status": "ok"}), 200
 
 
 if __name__ == "__main__":
-    threading.Thread(target=_gmail_poll_loop, daemon=True).start()
-    _start_scheduler()
+    # Local dev only — Cloud Run invokes the app via gunicorn (see Dockerfile).
     app.run(host="0.0.0.0", port=config.PORT, debug=config.DEBUG)
