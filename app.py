@@ -74,7 +74,11 @@ def require_scheduler_secret(fn):
 def require_dashboard_key(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        provided = request.headers.get("X-Dashboard-Key", "")
+        # Accept the key either as a header (used by the dashboard page's
+        # JS) or as a ?key= query param (lets a person trigger a protected
+        # route by just pasting a URL in a browser — avoids terminal/shell
+        # quoting issues entirely for one-off manual actions).
+        provided = request.headers.get("X-Dashboard-Key", "") or request.args.get("key", "")
         expected = config.DASHBOARD_ACCESS_KEY
         if not expected or not hmac.compare_digest(provided, expected):
             return jsonify({"error": "unauthorized"}), 401
@@ -153,7 +157,7 @@ def dashboard_data_route():
     return jsonify(build_dashboard_payload()), 200
 
 
-@app.route("/internal/setup-sheets", methods=["POST"])
+@app.route("/internal/setup-sheets", methods=["GET", "POST"])
 @require_dashboard_key
 def setup_sheets_route():
     """One-time (safe to re-run) — creates the 8 required tabs + header
