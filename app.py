@@ -48,6 +48,7 @@ import config
 from branches import whatsapp_incoming, website_lead, email_support, request_documents, payment_confirmation
 from branches import compliance_reminders, document_followup, lead_followup, invoice_followup
 from services.dashboard_data import build_dashboard_payload
+from setup_sheets import run_setup
 
 logging.basicConfig(
     level=logging.INFO,
@@ -150,6 +151,20 @@ def dashboard_page_route():
 @require_dashboard_key
 def dashboard_data_route():
     return jsonify(build_dashboard_payload()), 200
+
+
+@app.route("/internal/setup-sheets", methods=["POST"])
+@require_dashboard_key
+def setup_sheets_route():
+    """One-time (safe to re-run) — creates the 8 required tabs + header
+    rows in GOOGLE_SPREADSHEET_ID if they don't already exist. Lets this
+    run against the deployed service instead of needing local Python."""
+    try:
+        result = run_setup()
+        return jsonify({"status": "ok", **result}), 200
+    except Exception as e:
+        log.exception("setup-sheets failed")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ── Branch 3 + 6-9: Cloud Scheduler-triggered internal jobs ─────────────
