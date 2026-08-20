@@ -216,7 +216,18 @@ CONVERSATION_MEMORY = SheetsTable(
     ["id", "session_key", "role", "content", "created_at"],
 )
 
+# Task management — not in the original workflow at all, added for the
+# dashboard's Tasks view. Manual/team-assigned, not touched by any
+# automation branch.
+TASKS = SheetsTable(
+    "Tasks",
+    [
+        "task_id", "title", "description", "client_id", "client_name",
+        "due_date", "priority", "status", "created_at",
+    ],
+)
+
 ALL_TABLES = [
     CLIENTS, DOCUMENTS_TRACKER, COMPLIANCE_CALENDAR, LEADS, INVOICES,
-    QUERY_LOG, ERROR_LOG, CONVERSATION_MEMORY,
+    QUERY_LOG, ERROR_LOG, CONVERSATION_MEMORY, TASKS,
 ]
