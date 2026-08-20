@@ -48,7 +48,7 @@ import config
 from branches import whatsapp_incoming, website_lead, email_support, request_documents, payment_confirmation
 from branches import compliance_reminders, document_followup, lead_followup, invoice_followup
 from services.dashboard_data import build_dashboard_payload
-from services.sheets_db import CLIENTS, COMPLIANCE_CALENDAR, INVOICES, DOCUMENTS_TRACKER
+from services.sheets_db import CLIENTS, COMPLIANCE_CALENDAR, INVOICES, DOCUMENTS_TRACKER, LEADS, TASKS
 from setup_sheets import run_setup
 
 logging.basicConfig(
@@ -205,6 +205,36 @@ def mark_compliance_filed_route(compliance_id):
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/api/compliance", methods=["POST"])
+@require_dashboard_key
+def add_compliance_route():
+    import time
+
+    body = request.get_json(force=True, silent=True) or {}
+    client_id = str(body.get("client_id", "")).strip()
+    compliance_type = str(body.get("compliance_type", "")).strip()
+    due_date = str(body.get("due_date", "")).strip()
+    if not (client_id and compliance_type and due_date):
+        return jsonify({"error": "bad_request", "message": "client_id, compliance_type, due_date required"}), 400
+
+    client = CLIENTS.find_one("client_id", client_id) or {}
+    compliance_id = f"COMP-{int(time.time() * 1000)}"
+    COMPLIANCE_CALENDAR.append(
+        {
+            "compliance_id": compliance_id,
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "phone": client.get("phone", ""),
+            "email": client.get("email", ""),
+            "compliance_type": compliance_type,
+            "due_date": due_date,
+            "status": "Pending",
+            "reminder_count": 0,
+        }
+    )
+    return jsonify({"status": "ok", "compliance_id": compliance_id}), 200
+
+
 @app.route("/api/invoices/<invoice_id>/mark-paid", methods=["POST"])
 @require_dashboard_key
 def mark_invoice_paid_route(invoice_id):
@@ -212,6 +242,41 @@ def mark_invoice_paid_route(invoice_id):
     if not ok:
         return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/invoices", methods=["POST"])
+@require_dashboard_key
+def add_invoice_route():
+    import time
+
+    body = request.get_json(force=True, silent=True) or {}
+    client_id = str(body.get("client_id", "")).strip()
+    due_date = str(body.get("due_date", "")).strip()
+    try:
+        amount = float(body.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0
+    if not (client_id and due_date and amount > 0):
+        return jsonify({"error": "bad_request", "message": "client_id, due_date, amount (> 0) required"}), 400
+
+    client = CLIENTS.find_one("client_id", client_id) or {}
+    invoice_id = f"INV-{int(time.time() * 1000)}"
+    INVOICES.append(
+        {
+            "invoice_id": invoice_id,
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "phone": client.get("phone", ""),
+            "email": client.get("email", ""),
+            "amount": amount,
+            "currency": str(body.get("currency") or "INR").strip(),
+            "due_date": due_date,
+            "status": "Pending",
+            "reminder_count": 0,
+            "escalated": "No",
+        }
+    )
+    return jsonify({"status": "ok", "invoice_id": invoice_id}), 200
 
 
 @app.route("/api/documents/<doc_id>/mark-received", methods=["POST"])
@@ -222,6 +287,121 @@ def mark_document_received_route(doc_id):
     ok = DOCUMENTS_TRACKER.update_by(
         "doc_id", doc_id, {"status": "Received", "received_date": dt.datetime.now().isoformat()}
     )
+    if not ok:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/documents", methods=["POST"])
+@require_dashboard_key
+def add_document_route():
+    import time
+    import datetime as dt
+
+    body = request.get_json(force=True, silent=True) or {}
+    client_id = str(body.get("client_id", "")).strip()
+    document_name = str(body.get("document_name", "")).strip()
+    if not (client_id and document_name):
+        return jsonify({"error": "bad_request", "message": "client_id, document_name required"}), 400
+
+    client = CLIENTS.find_one("client_id", client_id) or {}
+    doc_id = f"DOC-{int(time.time() * 1000)}"
+    DOCUMENTS_TRACKER.append(
+        {
+            "doc_id": doc_id,
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "phone": client.get("phone", ""),
+            "email": client.get("email", ""),
+            "compliance_type": str(body.get("compliance_type", "")).strip(),
+            "document_name": document_name,
+            "requested_date": dt.datetime.now().isoformat(),
+            "status": "Pending",
+            "followup_count": 0,
+        }
+    )
+    return jsonify({"status": "ok", "doc_id": doc_id}), 200
+
+
+@app.route("/api/leads", methods=["POST"])
+@require_dashboard_key
+def add_lead_route():
+    import time
+
+    body = request.get_json(force=True, silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return jsonify({"error": "bad_request", "message": "name is required"}), 400
+
+    lead_id = f"LEAD-MANUAL-{int(time.time() * 1000)}"
+    LEADS.append(
+        {
+            "lead_id": lead_id,
+            "name": name,
+            "phone": str(body.get("phone", "")).strip(),
+            "email": str(body.get("email", "")).strip(),
+            "source": str(body.get("source") or "Manual").strip(),
+            "requirement": str(body.get("requirement", "")).strip(),
+            "status": "New",
+            "followup_attempts": 0,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    )
+    return jsonify({"status": "ok", "lead_id": lead_id}), 200
+
+
+@app.route("/api/leads/<lead_id>/set-status", methods=["POST"])
+@require_dashboard_key
+def set_lead_status_route(lead_id):
+    body = request.get_json(force=True, silent=True) or {}
+    new_status = str(body.get("status", "")).strip()
+    valid_statuses = {"New", "Qualifying", "Converted", "Lost", "Cold-Closed"}
+    if new_status not in valid_statuses:
+        return jsonify({"error": "bad_request", "message": f"status must be one of {sorted(valid_statuses)}"}), 400
+
+    ok = LEADS.update_by("lead_id", lead_id, {"status": new_status})
+    if not ok:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/tasks", methods=["POST"])
+@require_dashboard_key
+def add_task_route():
+    import time
+
+    body = request.get_json(force=True, silent=True) or {}
+    title = str(body.get("title", "")).strip()
+    if not title:
+        return jsonify({"error": "bad_request", "message": "title is required"}), 400
+
+    client_id = str(body.get("client_id", "")).strip()
+    client_name = ""
+    if client_id:
+        client = CLIENTS.find_one("client_id", client_id) or {}
+        client_name = client.get("name", "")
+
+    task_id = f"TASK-{int(time.time() * 1000)}"
+    TASKS.append(
+        {
+            "task_id": task_id,
+            "title": title,
+            "description": str(body.get("description", "")).strip(),
+            "client_id": client_id,
+            "client_name": client_name,
+            "due_date": str(body.get("due_date", "")).strip(),
+            "priority": str(body.get("priority") or "Medium").strip(),
+            "status": "Open",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    )
+    return jsonify({"status": "ok", "task_id": task_id}), 200
+
+
+@app.route("/api/tasks/<task_id>/mark-done", methods=["POST"])
+@require_dashboard_key
+def mark_task_done_route(task_id):
+    ok = TASKS.update_by("task_id", task_id, {"status": "Done"})
     if not ok:
         return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "ok"}), 200
