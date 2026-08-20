@@ -78,9 +78,22 @@ def require_dashboard_key(fn):
         # JS) or as a ?key= query param (lets a person trigger a protected
         # route by just pasting a URL in a browser — avoids terminal/shell
         # quoting issues entirely for one-off manual actions).
+        #
+        # A query-string value with a literal '+' in it arrives here
+        # already turned into a space — that's standard URL/form decoding
+        # (RFC 1866), not a bug, but it silently breaks an exact-match
+        # comparison if the real key contains '+'. Since that's the only
+        # character this transformation touches, and it's one-directional
+        # and deterministic, we safely check both the value as received
+        # and the value with spaces restored to '+' — so a key containing
+        # '+' still works correctly via the URL method, not just headers.
         provided = request.headers.get("X-Dashboard-Key", "") or request.args.get("key", "")
         expected = config.DASHBOARD_ACCESS_KEY
-        if not expected or not hmac.compare_digest(provided, expected):
+        matches = expected and (
+            hmac.compare_digest(provided, expected)
+            or hmac.compare_digest(provided.replace(" ", "+"), expected)
+        )
+        if not matches:
             return jsonify({"error": "unauthorized"}), 401
         return fn(*args, **kwargs)
 
