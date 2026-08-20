@@ -48,6 +48,7 @@ import config
 from branches import whatsapp_incoming, website_lead, email_support, request_documents, payment_confirmation
 from branches import compliance_reminders, document_followup, lead_followup, invoice_followup
 from services.dashboard_data import build_dashboard_payload
+from services.sheets_db import CLIENTS, COMPLIANCE_CALENDAR, INVOICES, DOCUMENTS_TRACKER
 from setup_sheets import run_setup
 
 logging.basicConfig(
@@ -168,6 +169,62 @@ def dashboard_page_route():
 @require_dashboard_key
 def dashboard_data_route():
     return jsonify(build_dashboard_payload()), 200
+
+
+# ── Dashboard write actions (all require the dashboard key) ─────────────
+@app.route("/api/clients", methods=["POST"])
+@require_dashboard_key
+def add_client_route():
+    import time
+
+    body = request.get_json(force=True, silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return jsonify({"error": "bad_request", "message": "name is required"}), 400
+
+    client_id = f"CL-{int(time.time() * 1000)}"
+    CLIENTS.append(
+        {
+            "client_id": client_id,
+            "name": name,
+            "phone": str(body.get("phone", "")).strip(),
+            "email": str(body.get("email", "")).strip(),
+            "business_type": str(body.get("business_type", "")).strip(),
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    )
+    return jsonify({"status": "ok", "client_id": client_id}), 200
+
+
+@app.route("/api/compliance/<compliance_id>/mark-filed", methods=["POST"])
+@require_dashboard_key
+def mark_compliance_filed_route(compliance_id):
+    ok = COMPLIANCE_CALENDAR.update_by("compliance_id", compliance_id, {"status": "Filed"})
+    if not ok:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/invoices/<invoice_id>/mark-paid", methods=["POST"])
+@require_dashboard_key
+def mark_invoice_paid_route(invoice_id):
+    ok = INVOICES.update_by("invoice_id", invoice_id, {"status": "Paid"})
+    if not ok:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/documents/<doc_id>/mark-received", methods=["POST"])
+@require_dashboard_key
+def mark_document_received_route(doc_id):
+    import datetime as dt
+
+    ok = DOCUMENTS_TRACKER.update_by(
+        "doc_id", doc_id, {"status": "Received", "received_date": dt.datetime.now().isoformat()}
+    )
+    if not ok:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route("/internal/setup-sheets", methods=["GET", "POST"])
