@@ -77,6 +77,11 @@ DEBUG = _opt("FLASK_DEBUG", "false").lower() == "true"
 # X-Internal-Secret header; see README "Deploying to Cloud Run".
 SCHEDULER_SHARED_SECRET = _req("SCHEDULER_SHARED_SECRET")
 
+# ── Dashboard access (staff-facing /dashboard page + /api/dashboard-data) ─
+# Any long random string. The dashboard page prompts for this once and
+# stores it in the browser, sending it as the X-Dashboard-Key header.
+DASHBOARD_ACCESS_KEY = _req("DASHBOARD_ACCESS_KEY")
+
 # ── Scheduler timezone (informational — set directly on each Cloud
 #    Scheduler job at creation time; see README) ──────────────────────────
 SCHEDULER_TIMEZONE = _opt("SCHEDULER_TIMEZONE", "Asia/Kolkata")

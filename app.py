@@ -42,11 +42,12 @@ import functools
 import hmac
 import logging
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 import config
 from branches import whatsapp_incoming, website_lead, email_support, request_documents, payment_confirmation
 from branches import compliance_reminders, document_followup, lead_followup, invoice_followup
+from services.dashboard_data import build_dashboard_payload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +63,18 @@ def require_scheduler_secret(fn):
     def wrapper(*args, **kwargs):
         provided = request.headers.get("X-Internal-Secret", "")
         expected = config.SCHEDULER_SHARED_SECRET
+        if not expected or not hmac.compare_digest(provided, expected):
+            return jsonify({"error": "unauthorized"}), 401
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def require_dashboard_key(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        provided = request.headers.get("X-Dashboard-Key", "")
+        expected = config.DASHBOARD_ACCESS_KEY
         if not expected or not hmac.compare_digest(provided, expected):
             return jsonify({"error": "unauthorized"}), 401
         return fn(*args, **kwargs)
@@ -125,6 +138,18 @@ def payment_confirmation_route():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+# ── Staff dashboard (real data, key-gated) ───────────────────────────────
+@app.route("/dashboard", methods=["GET"])
+def dashboard_page_route():
+    return send_from_directory("static", "dashboard.html")
+
+
+@app.route("/api/dashboard-data", methods=["GET"])
+@require_dashboard_key
+def dashboard_data_route():
+    return jsonify(build_dashboard_payload()), 200
 
 
 # ── Branch 3 + 6-9: Cloud Scheduler-triggered internal jobs ─────────────

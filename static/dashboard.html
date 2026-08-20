@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CA Firm Automation — Live Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0F1A2E; --navy-light: #162236; --teal: #0EA5C9; --teal-light: #E0F2FE;
+    --amber: #F59E0B; --amber-light: #FEF3C7; --emerald: #10B981; --emerald-light: #D1FAE5;
+    --rose: #F43F5E; --rose-light: #FFE4E6; --violet: #8B5CF6; --violet-light: #EDE9FE;
+    --slate: #64748B; --slate-light: #F1F5F9; --surface: #F8FAFC; --white: #FFFFFF;
+    --border: #E2E8F0; --text-primary: #0F172A; --text-secondary: #475569; --text-muted: #94A3B8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: var(--surface); color: var(--text-primary); }
+  .space { font-family: 'Space Grotesk', sans-serif; }
+
+  #gate { position: fixed; inset: 0; background: var(--navy); display: flex; align-items: center;
+    justify-content: center; z-index: 100; }
+  #gate .box { background: var(--white); border-radius: 12px; padding: 32px; width: 320px; text-align: center; }
+  #gate input { width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 8px;
+    font-size: 14px; margin: 16px 0 12px; }
+  #gate button { width: 100%; padding: 10px; background: var(--teal); color: white; border: none;
+    border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
+  #gate .err { color: var(--rose); font-size: 12.5px; margin-top: 10px; min-height: 16px; }
+
+  .topbar { background: var(--navy); color: white; padding: 18px 28px; display: flex;
+    align-items: center; justify-content: space-between; }
+  .topbar h1 { font-family: 'Space Grotesk', sans-serif; font-size: 18px; }
+  .topbar .meta { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  .refresh-btn { background: rgba(255,255,255,0.1); border: none; color: white; padding: 8px 14px;
+    border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+
+  .content { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;
+    margin-bottom: 24px; }
+  .stat-card { background: white; border-radius: 12px; padding: 18px 20px; border: 1px solid var(--border);
+    border-top: 3px solid var(--accent, var(--teal)); }
+  .stat-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: .5px; margin-bottom: 6px; }
+  .stat-value { font-family: 'Space Grotesk', sans-serif; font-size: 28px; font-weight: 700; }
+  .stat-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .section { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+    margin-bottom: 20px; }
+  .section h2 { font-size: 15px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center;
+    gap: 8px; }
+  .section h2 .count { background: var(--slate-light); color: var(--slate); font-size: 11px;
+    padding: 2px 8px; border-radius: 20px; font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px;
+    color: var(--text-muted); padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--slate-light); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge.rose { background: var(--rose-light); color: #9F1239; }
+  .badge.amber { background: var(--amber-light); color: #92400E; }
+  .badge.emerald { background: var(--emerald-light); color: #065F46; }
+  .badge.slate { background: var(--slate-light); color: var(--slate); }
+  .badge.teal { background: var(--teal-light); color: #0C4A6E; }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 20px; text-align: center; }
+  .stub { background: var(--slate-light); border-radius: 10px; padding: 24px; text-align: center;
+    color: var(--text-muted); font-size: 13px; }
+  .stub b { display: block; color: var(--text-secondary); font-size: 14px; margin-bottom: 4px; }
+
+  .nav { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
+  .nav button { background: none; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+  .nav button.active { background: var(--navy); color: white; }
+  .pane { display: none; } .pane.active { display: block; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <div class="space" style="font-size:16px;font-weight:700;margin-bottom:4px;">CA Firm Automation</div>
+    <div style="font-size:12.5px;color:var(--text-muted);">Enter the dashboard access key</div>
+    <input type="password" id="key-input" placeholder="Access key" autofocus>
+    <button onclick="submitKey()">Unlock</button>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="topbar">
+    <div>
+      <h1>CA Firm Automation — Live Dashboard</h1>
+      <div class="meta" id="last-updated">Loading…</div>
+    </div>
+    <button class="refresh-btn" onclick="load()">↻ Refresh</button>
+  </div>
+
+  <div class="content">
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="nav">
+      <button class="active" data-pane="compliance" onclick="showPane('compliance', this)">🔔 Compliance</button>
+      <button data-pane="leads" onclick="showPane('leads', this)">📊 Leads</button>
+      <button data-pane="invoices" onclick="showPane('invoices', this)">🧾 Invoices</button>
+      <button data-pane="documents" onclick="showPane('documents', this)">📄 Documents</button>
+      <button data-pane="clients" onclick="showPane('clients', this)">👥 Clients</button>
+      <button data-pane="other" onclick="showPane('other', this)">More</button>
+    </div>
+
+    <div class="pane active" id="pane-compliance">
+      <div class="section">
+        <h2>Upcoming &amp; Overdue Compliance <span class="count" id="compliance-count">0</span></h2>
+        <div id="compliance-table"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-leads">
+      <div class="section">
+        <h2>Leads <span class="count" id="leads-count">0</span></h2>
+        <div id="leads-table"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-invoices">
+      <div class="section">
+        <h2>Invoices <span class="count" id="invoices-count">0</span></h2>
+        <div id="invoices-table"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-documents">
+      <div class="section">
+        <h2>Document Requests <span class="count" id="documents-count">0</span></h2>
+        <div id="documents-table"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-clients">
+      <div class="section">
+        <h2>Clients <span class="count" id="clients-count">0</span></h2>
+        <div id="clients-table"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-other">
+      <div class="section">
+        <h2>Task Management</h2>
+        <div class="stub"><b>Not yet built</b>No task-assignment feature exists in the backend yet.</div>
+      </div>
+      <div class="section">
+        <h2>Reports &amp; Analytics</h2>
+        <div class="stub"><b>Not yet built</b>Revenue trends and compliance-rate analytics aren't built yet — this dashboard shows current-state data only.</div>
+      </div>
+      <div class="section">
+        <h2>AI Support Agent — Live Conversations</h2>
+        <div class="stub"><b>Not yet built</b>Real WhatsApp/email conversations happen through the automation directly; a live chat viewer here isn't built yet. Support activity today: <span id="queries-today-inline">–</span> queries handled.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let API_KEY = localStorage.getItem('ca_dashboard_key') || '';
+
+function submitKey() {
+  const val = document.getElementById('key-input').value.trim();
+  if (!val) return;
+  API_KEY = val;
+  load();
+}
+
+function showPane(id, el) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('pane-' + id).classList.add('active');
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function fmtMoney(n) {
+  n = Number(n) || 0;
+  if (n >= 100000) return '₹' + (n / 100000).toFixed(1) + 'L';
+  return '₹' + n.toLocaleString('en-IN');
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return String(d).slice(0, 10);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function statCard(label, value, sub, color) {
+  return `<div class="stat-card" style="--accent:${color}">
+    <div class="stat-label">${label}</div>
+    <div class="stat-value space">${value}</div>
+    <div class="stat-sub">${sub}</div>
+  </div>`;
+}
+
+function emptyRow(colspan, text) {
+  return `<tr><td colspan="${colspan}" class="empty">${text}</td></tr>`;
+}
+
+function renderCompliance(rows) {
+  document.getElementById('compliance-count').textContent = rows.length;
+  if (!rows.length) { document.getElementById('compliance-table').innerHTML = '<div class="empty">No open compliance items.</div>'; return; }
+  const today = new Date(); today.setHours(0,0,0,0);
+  let html = '<table><tr><th>Client</th><th>Type</th><th>Due</th><th>Status</th><th>Reminders sent</th></tr>';
+  rows.forEach(r => {
+    const due = r.due_date ? new Date(r.due_date) : null;
+    const days = due ? Math.round((due - today) / 86400000) : null;
+    let badge = 'slate', label = r.status || '—';
+    if (days !== null) {
+      if (days < 0) { badge = 'rose'; label = Math.abs(days) + 'd overdue'; }
+      else if (days <= 7) { badge = 'rose'; label = days + 'd left'; }
+      else if (days <= 30) { badge = 'amber'; label = days + 'd left'; }
+      else { badge = 'emerald'; label = days + 'd left'; }
+    }
+    html += `<tr><td>${esc(r.client_name)}</td><td>${esc(r.compliance_type)}</td>
+      <td>${fmtDate(r.due_date)}</td><td><span class="badge ${badge}">${label}</span></td>
+      <td>${r.reminder_count || 0}</td></tr>`;
+  });
+  document.getElementById('compliance-table').innerHTML = html + '</table>';
+}
+
+function renderLeads(rows) {
+  document.getElementById('leads-count').textContent = rows.length;
+  if (!rows.length) { document.getElementById('leads-table').innerHTML = '<div class="empty">No leads yet.</div>'; return; }
+  const scoreBadge = { Hot: 'rose', Warm: 'amber', Cold: 'slate' };
+  let html = '<table><tr><th>Name</th><th>Requirement</th><th>Source</th><th>Score</th><th>Status</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${esc(r.name)}</td><td>${esc(r.requirement || '—')}</td><td>${esc(r.source || '—')}</td>
+      <td><span class="badge ${scoreBadge[r.qualification_score] || 'slate'}">${esc(r.qualification_score || '—')}</span></td>
+      <td>${esc(r.status || '—')}</td></tr>`;
+  });
+  document.getElementById('leads-table').innerHTML = html + '</table>';
+}
+
+function renderInvoices(rows) {
+  document.getElementById('invoices-count').textContent = rows.length;
+  if (!rows.length) { document.getElementById('invoices-table').innerHTML = '<div class="empty">No invoices yet.</div>'; return; }
+  const statusBadge = { Paid: 'emerald', Overdue: 'rose', Pending: 'amber' };
+  let html = '<table><tr><th>Client</th><th>Amount</th><th>Due</th><th>Status</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${esc(r.client_name)}</td><td>${fmtMoney(r.amount)}</td><td>${fmtDate(r.due_date)}</td>
+      <td><span class="badge ${statusBadge[r.status] || 'slate'}">${esc(r.status || '—')}</span></td></tr>`;
+  });
+  document.getElementById('invoices-table').innerHTML = html + '</table>';
+}
+
+function renderDocuments(rows) {
+  document.getElementById('documents-count').textContent = rows.length;
+  if (!rows.length) { document.getElementById('documents-table').innerHTML = '<div class="empty">No document requests yet.</div>'; return; }
+  let html = '<table><tr><th>Client</th><th>Document</th><th>Status</th><th>Requested</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${esc(r.client_name)}</td><td>${esc(r.document_name)}</td>
+      <td><span class="badge ${r.status === 'Received' ? 'emerald' : 'amber'}">${esc(r.status || '—')}</span></td>
+      <td>${fmtDate(r.requested_date)}</td></tr>`;
+  });
+  document.getElementById('documents-table').innerHTML = html + '</table>';
+}
+
+function renderClients(rows) {
+  document.getElementById('clients-count').textContent = rows.length;
+  if (!rows.length) { document.getElementById('clients-table').innerHTML = '<div class="empty">No clients added yet.</div>'; return; }
+  let html = '<table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Type</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${esc(r.name)}</td><td>${esc(r.phone || '—')}</td><td>${esc(r.email || '—')}</td>
+      <td>${esc(r.business_type || '—')}</td></tr>`;
+  });
+  document.getElementById('clients-table').innerHTML = html + '</table>';
+}
+
+async function load() {
+  const res = await fetch('/api/dashboard-data', { headers: { 'X-Dashboard-Key': API_KEY } });
+  if (res.status === 401) {
+    document.getElementById('gate').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('gate-err').textContent = 'Wrong key — try again.';
+    localStorage.removeItem('ca_dashboard_key');
+    return;
+  }
+  if (!res.ok) {
+    document.getElementById('gate-err').textContent = 'Server error loading data — check the deploy logs.';
+    return;
+  }
+  localStorage.setItem('ca_dashboard_key', API_KEY);
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+
+  const data = await res.json();
+  const s = data.summary;
+
+  document.getElementById('last-updated').textContent = 'Live data — last loaded ' + new Date(data.generated_at).toLocaleString('en-IN');
+  document.getElementById('queries-today-inline').textContent = s.queries_handled_today;
+
+  document.getElementById('stats-grid').innerHTML =
+    statCard('Total Clients', s.total_clients, '', 'var(--teal)') +
+    statCard('Pending Deadlines', s.pending_deadlines, s.urgent_deadlines_7d + ' urgent (≤7 days)', 'var(--amber)') +
+    statCard('Fees Collected', fmtMoney(s.fees_collected_total), 'from Paid invoices', 'var(--emerald)') +
+    statCard('Pending Fees', fmtMoney(s.pending_fees_total), s.overdue_invoices_count + ' overdue', 'var(--rose)') +
+    statCard('Open Leads', s.open_leads, s.hot_leads + ' hot', 'var(--violet)') +
+    statCard('Pending Documents', s.pending_documents, '', 'var(--teal)');
+
+  renderCompliance(data.compliance);
+  renderLeads(data.leads);
+  renderInvoices(data.invoices);
+  renderDocuments(data.documents);
+  renderClients(data.clients);
+}
+
+document.getElementById('key-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitKey(); });
+
+if (API_KEY) load();
+</script>
+</body>
+</html>

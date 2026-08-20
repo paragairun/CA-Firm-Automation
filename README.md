@@ -287,9 +287,24 @@ reintroduce that always-on scheduling pattern rather than relying on the
 current request-driven `/internal/*` routes, since nothing will ever call
 them without Cloud Scheduler in the picture.
 
-## Differences from the original n8n workflow
+## Dashboard
 
-- **Data store**: a real Google Sheet with a defined schema per tab
+`/dashboard` — a key-gated staff page showing live data: client count,
+compliance deadlines, leads, invoices, documents, all pulled straight from
+the Sheet via `/api/dashboard-data`. Requires `DASHBOARD_ACCESS_KEY` set
+in the environment; the page prompts for it once and remembers it in the
+browser.
+
+This intentionally shows only fields the backend actually tracks. An
+earlier mockup of this dashboard (a static HTML file, not connected to
+anything) included invented fields like a lead's "deal value" or an
+in-progress "AI qualification %" that this system doesn't collect — those
+were left out here rather than faked. If you want either of those as real
+tracked fields, that's a schema change (`services/sheets_db.py` +
+`setup_sheets.py`) plus wiring into the relevant branch, not just a
+dashboard change.
+
+## Differences from the original n8n workflow- **Data store**: a real Google Sheet with a defined schema per tab
   (`services/sheets_db.py`), created via `setup_sheets.py` instead of
   hand-built.
 - **Auth model**: one service account with domain-wide delegation instead
@@ -334,8 +349,13 @@ them without Cloud Scheduler in the picture.
 
 ## Not yet built
 
-- An admin UI beyond the Sheet itself — for now that Sheet *is* the admin
-  UI (view/edit clients, compliance, invoices, leads directly).
+- Editing from the dashboard — `/dashboard` is read-only; editing clients,
+  compliance rows, invoices, etc. still happens directly in the Sheet
+  (or you could add write endpoints later, protected the same way as
+  `/internal/*`).
+- Task management, revenue/analytics reporting, a live conversation
+  viewer for WhatsApp/email chats — none of these have backend support;
+  the dashboard says so plainly rather than showing fake numbers for them.
 - Any Vertex AI / GCP-billing variant of the Gemini calls — this uses the
   simpler Gemini Developer API (`GEMINI_API_KEY`), billed against your
   Google AI Studio paid tier. Swappable in `services/llm.py` if you'd
