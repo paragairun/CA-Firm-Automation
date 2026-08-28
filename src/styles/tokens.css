@@ -1,0 +1,78 @@
+:root {
+  /* Paper & ink — cool ledger-grey rather than warm cream, deep navy ink
+     instead of pure black so long numeric columns stay easy on the eye. */
+  --paper: #eceee4;
+  --paper-line: #d7d9c9;
+  --card-bg: #f7f8f1;
+  --ink: #1b2740;
+  --ink-soft: #545f78;
+  --ink-faint: #8b93a6;
+
+  /* Gold does structural work (rules, active states) so red/amber/green
+     stay reserved for compliance status and never get diluted. */
+  --gold: #9c7a3c;
+  --gold-soft: #cbb37f;
+  --gold-bg: #f1e9d3;
+
+  /* Status semantics — the one place this palette must be conventional,
+     since accountants read red/amber/green as a fixed vocabulary. */
+  --good: #3f7a5b;
+  --good-bg: #e2eee6;
+  --warn: #b98530;
+  --warn-bg: #f5ecda;
+  --bad: #b0432f;
+  --bad-bg: #f5e2dd;
+  --neutral: #8b93a6;
+  --neutral-bg: #e7e8e0;
+
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --font-body: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 8px;
+  --radius-full: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --margin-rule-offset: 88px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --transition-fast: 140ms ease;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast: 0ms;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

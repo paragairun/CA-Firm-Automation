@@ -1,362 +1,171 @@
-# CA Firm Automation Suite
+# PracticeOS
 
-A full-stack rewrite of the "CA Firm Automation — Zero to Pro Automation"
-n8n workflow as a real Python/Flask service — running almost entirely on
-Google Workspace (paid tier) instead of a no-code workflow file and a
-scattering of third-party SaaS tools.
+CA/tax-firm practice management SaaS with native Tally Prime integration.
+Full functional spec: see `ca-saas-platform-spec-v1.1.md` (delivered separately).
 
-## What it does
+## Stack
+React + TypeScript (Vite) frontend, Supabase (Postgres + Auth + Storage) backend.
 
-| # | Trigger | Branch | Use case |
-|---|---|---|---|
-| 1 | `GET/POST /webhooks/whatsapp-incoming` | WhatsApp router | Support (known clients), document receipt, lead qualification (unknown numbers) |
-| 2 | `POST /webhooks/website-lead` | Website lead form | AI opening reply + classification + urgent alert |
-| 3 | Gmail poll (every `GMAIL_POLL_SECONDS`) | Email support | Known-client AI support replies; unknown senders become leads |
-| 4 | `POST /webhooks/request-documents` | Document request | Partner-initiated document collection ask |
-| 5 | `POST /webhooks/payment-confirmation` | Payment confirmation | Marks invoice Paid + sends thank-you |
-| 6 | Daily 09:00 | Compliance reminders | GST/ITR/TDS/ROC deadline nudges, escalating tone, synced to Calendar |
-| 7 | Daily 09:30 | Document follow-up | Nudges for documents still Pending 3+ days |
-| 8 | Daily 10:00 | Lead follow-up | Nudges open leads; auto Cold-Closed after 4 attempts |
-| 9 | Daily 10:30 | Invoice follow-up | Staged payment reminders, escalates >15 days overdue |
+## Status
+- [x] Core schema (`supabase/migrations/0001_init_schema.sql`) — all entities from the spec §2
+- [x] RLS policies (`supabase/migrations/0002_rls_policies.sql`) — firm-tenancy + per-client scoping for Article Assistants
+- [x] `firm_id` auto-derive trigger (`supabase/migrations/0003_firm_id_trigger.sql`) — client-scoped inserts no longer need to pass `firm_id` by hand
+- [x] Local dev seed data (`supabase/seed.sql`)
+- [x] Typed Supabase client + data-access layer (`src/lib/`)
+- [x] Dashboard page (`src/pages/Dashboard.tsx`) — compliance heatmap, Tally sync health, revenue/outstanding, upcoming deadlines, reconciliation alerts
+- [x] Client List (`src/pages/ClientList.tsx`) — searchable table, links into Client Detail
+- [x] Client Detail View (`src/pages/ClientDetail.tsx`) — sidebar nav (Overview wired, other tabs are stubs), Tally sync panel, filings timeline, quick stats (outstanding + ITC at risk), open tasks, recent documents, per spec §5.2
+- [x] Client-side routing (`react-router-dom`) via a shared `AppShell` — Dashboard / Clients nav, unbuilt routes fall back to a "coming soon" stub instead of a dead link
+- [x] Reconciliation Center (spec §7) — Summary Grid (`ReconciliationCenter.tsx`, period switcher) + Line-Item Detail (`ReconciliationDetail.tsx`, status tabs, expandable rows, resolve/escalate/create-task, bulk actions)
+- [x] Auth wiring — Admin/Partner invites staff via a `Team` page → Edge Function → Supabase Auth invite email → `staff.auth_user_id` links automatically on signup (DB trigger, both directions), no manual linking step anywhere
+- [x] Ingestion API — `request-pairing-code` → `agent-pair` → `ingest-tally-sync` Edge Functions (spec §3.3 steps 1–6), token-based agent auth, idempotent upserts into `tally_ledgers`/`tally_vouchers`; "Connect Tally" button on Client Detail generates a real pairing code
+- [ ] Documents / Credential Vault / Tally Sync / Filings / Tasks / Billing / Activity tabs on Client Detail (sidebar links to them; pages not built)
+- [ ] Sync Agent — Windows service (spec §8)
+- [ ] Storage buckets + upload flow for Document Vault
+- [ ] Ingestion API / queue worker for Tally payloads
 
-Every branch that fails logs to the `Error_Log` sheet and pings the
-partner on Google Chat — same as the original workflow's shared
-error-handling chain.
+## Dashboard design
 
-## Architecture — Google Workspace end to end
+The Dashboard uses a deliberate "ledger paper" visual language rather than a
+generic SaaS look — appropriate for an accounting tool used by CAs all day:
 
-| Piece | Service |
-|---|---|
-| Data store | **Google Sheets** (one spreadsheet, one tab per table) — the partner can open it directly as a live admin UI |
-| AI (drafting + support agent) | **Gemini API** (`gemini-3.6-flash` by default) |
-| Email send/poll | **Gmail API** — domain-wide delegation, no app password |
-| Document storage | **Google Drive** — WhatsApp-received files saved into per-client folders |
-| Compliance deadlines | **Google Calendar** — real events with native reminders |
-| Partner alerts | **Google Chat** incoming webhook |
-| WhatsApp | Meta Cloud API (no Google equivalent exists) |
-| Compute | **Cloud Run** — serverless, request-driven, effectively free at this scale |
-| Scheduling | **Cloud Scheduler** — 5 jobs hitting authenticated `/internal/*` routes (see "Deploying to Cloud Run") |
+- **Palette** (`src/styles/tokens.css`): cool ledger-grey paper, deep navy
+  ink, and a gold accent that does all structural/UI work (links, active
+  states, the page's signature margin rule) — kept separate from red/amber/
+  green, which are reserved entirely for compliance status so they stay a
+  reliable, unambiguous signal.
+- **Type**: Fraunces (serif, official-document character) for headers, IBM
+  Plex Sans for UI text, IBM Plex Mono for every number — so columns of
+  amounts and dates actually align (`font-variant-numeric: tabular-nums`).
+- **Signature element**: a thin gold rule down the left margin, referencing
+  ruled ledger paper directly, plus circular "stamp" badges in the
+  compliance heatmap instead of plain colored dots (`StatusStamp.tsx`).
+- Every card has its own loading skeleton and empty state — no card ever
+  shows nothing while data is missing or still loading.
 
-One Google Cloud service account, authorized for **domain-wide
-delegation** in your Workspace Admin Console, powers Sheets, Gmail,
-Drive, and Calendar together — it impersonates a real mailbox
-(`GOOGLE_IMPERSONATE_EMAIL`) so sent mail, owned files, and calendar
-events all belong to the firm, not to a faceless service account.
+To adjust the palette or fonts, edit `src/styles/tokens.css` — every
+component pulls colors and type from CSS variables, nothing is hardcoded
+per-component.
 
-Runs on Cloud Run: no VM to patch, scales to zero between requests, and
-this app's traffic sits comfortably inside Cloud Run's free tier. A GCP
-VM + systemd path (same pattern as the trading bot on
-`padmajak-trading-bot-v2`) is documented as a fallback option below.
-
-## Setup
-
-### 1. Enable APIs (Google Cloud Console)
-
-In the GCP project tied to your Workspace (can be the same project as the
-trading bot, or a new one):
-**APIs & Services → Enable APIs** → enable all four:
-- Google Sheets API
-- Gmail API
-- Google Drive API
-- Google Calendar API
-
-### 2. Create the service account
-
-**IAM & Admin → Service Accounts → Create Service Account** → any name
-(e.g. `ca-firm-automation`) → **Keys → Add Key → JSON** → download it as
-`service-account.json`, keep it out of git.
-
-Note the service account's **Client ID** — it's on the service account's
-details page ("Advanced settings", or the `client_id` field inside the
-downloaded JSON key).
-
-### 3. Authorize domain-wide delegation (Workspace Admin Console)
-
-`admin.google.com` → **Security → API controls → Domain-wide delegation
-→ Add new**:
-- Client ID: the one from step 2
-- OAuth scopes (comma-separated, all on one line):
-  ```
-  https://www.googleapis.com/auth/spreadsheets,
-  https://www.googleapis.com/auth/gmail.modify,
-  https://www.googleapis.com/auth/gmail.send,
-  https://www.googleapis.com/auth/drive,
-  https://www.googleapis.com/auth/calendar
-  ```
-
-### 4. Pick the mailbox this service acts as
-
-Any real Workspace mailbox — e.g. `automation@yourfirm.com`. This is
-`GOOGLE_IMPERSONATE_EMAIL`. Sent emails, uploaded Drive files, and
-calendar events will all belong to this mailbox.
-
-### 5. Create the Google Sheet
-
-Create a blank Google Sheet, owned by (or shared as Editor with)
-`GOOGLE_IMPERSONATE_EMAIL`. Copy its ID from the URL:
-`https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit` →
-`GOOGLE_SPREADSHEET_ID`.
-
-### 6. Gemini API key
-
-`aistudio.google.com` → **Get API key** (billed against your paid Gemini
-tier) → `GEMINI_API_KEY`.
-
-### 7. Google Chat webhook (partner alerts)
-
-Google Chat → create/open the Space you want alerts in → **Apps &
-integrations → Manage webhooks → Add webhook** → copy the URL →
-`GOOGLE_CHAT_WEBHOOK_URL`.
-
-### 8. WhatsApp Cloud API (unchanged — Meta, not Google)
-
-Meta for Developers → your App → WhatsApp → API Setup →
-`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`. Pick any secret
-string for `WHATSAPP_WEBHOOK_VERIFY_TOKEN` and set the same value in the
-Meta App dashboard's webhook config once deployed.
-
-### 9. Configure and initialize
+## Getting started
 
 ```bash
-cp .env.example .env        # fill in everything from steps 1-8
-# put the downloaded service-account.json in the project root
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python3 setup_sheets.py     # creates all 8 tabs with correct headers
+npm install
+supabase login
+supabase link --project-ref <your-project-ref>
+supabase db push          # applies migrations 0001–0004
+supabase db seed          # optional: loads supabase/seed.sql for local dev
+supabase functions deploy invite-staff
+supabase functions deploy request-pairing-code
+supabase functions deploy agent-pair
+supabase functions deploy ingest-tally-sync
+npm run db:types          # regenerates src/lib/database.types.ts from the live schema
+cp .env.example .env      # fill in VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+npm run dev
 ```
 
-`setup_sheets.py` is safe to re-run — it skips tabs that already exist
-and never touches existing data.
+### Auth setup
 
-### 10. Populate the Clients tab
+1. In the Supabase dashboard, set **Authentication → URL Configuration →
+   Site URL** to your app's origin, and add `<origin>/accept-invite` to
+   **Redirect URLs** — this is where the invite email's link lands people
+   to set their password (`src/pages/AcceptInvite.tsx`).
+2. To create the first user (before anyone exists to send an invite from
+   the Team page), either use the Supabase dashboard's "Invite user" action
+   directly, or call `invite-staff` once manually with a service-role
+   token. Give that first person `role: 'admin'` so they can invite
+   everyone else from the app.
+3. `enable_signup = false` in `supabase/config.toml` blocks self-serve
+   `/signup` — it does not affect `auth.admin.inviteUserByEmail`, which is
+   how every account in this app gets created.
 
-Unlike the original (Google Sheets edited by hand with no validation),
-you can also insert rows directly in the Sheets UI, or programmatically:
-
-```python
-from services.sheets_db import CLIENTS
-CLIENTS.append({
-    "client_id": "CL-001", "name": "Rahul Sharma", "phone": "919876543210",
-    "email": "rahul@example.com", "business_type": "Proprietorship",
-})
-```
-
-Same for `Compliance_Calendar` and `Invoices` as you onboard clients and
-create filings/invoices — the partner can also just type rows straight
-into the Sheet.
-
-### 11. WhatsApp webhook
-
-Point Meta's App dashboard webhook Callback URL at:
-`https://your-domain/webhooks/whatsapp-incoming`
-with the same `WHATSAPP_WEBHOOK_VERIFY_TOKEN` from step 8.
-
-### 12. Run locally
-
-Requires **Python 3.10+** (uses `X | None` type hints).
-
+For fully local development instead of a hosted project:
 ```bash
-python3 app.py
+supabase start            # spins up local Postgres/Auth/Studio via Docker
+supabase db reset         # applies migrations + seed against the local stack
 ```
 
-### 13. Deploy — two options
+## Schema notes
 
-**Option A: Cloud Run (recommended — serverless, effectively free)**
+- **Multi-tenancy**: every tenant-scoped table carries `firm_id`. RLS policies
+  derive the caller's `firm_id` from `staff.auth_user_id = auth.uid()` —
+  link a `staff` row to a Supabase Auth user via `auth_user_id` when
+  onboarding a team member.
+- **Resource-scoped RBAC**: Admin/Partner/Audit Manager see all clients in
+  the firm; Article Assistants only see clients in `client_staff_assignments`.
+  This is enforced in Postgres (`can_access_client()`), not just in the UI.
+- **Credentials vault**: encrypted client-side or via a Postgres extension
+  before write — the schema stores ciphertext columns (`*_encrypted`) plus
+  a `access_scope` role allowlist per row. Wire up actual encryption
+  (e.g. `pgsodium` or app-layer AES-256 with a KMS-managed key) before
+  storing real portal credentials; the current migration only enforces the
+  *shape*, not the encryption itself.
+- **Tally write-back**: `tally_write_back_jobs.status` only ever moves to
+  `confirmed` from a server-side call authenticated as the Sync Agent
+  (service role), never from client code — matches the "never auto-post"
+  constraint in the spec. The included `approveWriteBackJob()` helper only
+  handles the human-approval step, not the post-to-Tally confirmation.
+- **Reconciliation delta**: `reconciliation_records.delta` is a generated
+  column (`tally_value - portal_value`), so it can't drift from the two
+  source values.
 
-No VM to patch or manage; Cloud Run only runs (and only costs anything)
-while handling a request, and this app's traffic is nowhere near its free
-tier limits.
+- **Outstanding balance**: derived from `tally_ledgers` rows whose
+  `ledger_group` matches `%debtor%`, summed per client with `dr` balances
+  positive and `cr` negative. This is a heuristic on however a given Tally
+  company happens to name its debtor ledger group — worth revisiting once
+  real client data shows the naming patterns in practice.
+- **Client Detail data loading**: `getClientDetail()` fires its six
+  underlying queries with `Promise.all` rather than sequentially — each
+  card on the page depends on a different table, so there's no reason to
+  wait on one before starting the next.
 
-Enable the extra APIs this path needs:
+- **Bulk resolve simplification**: the spec's §7.3 bulk "mark resolved" is
+  gated on every selected row already carrying its own note. The current
+  `bulkResolveReconciliationRecords()` instead takes one shared note applied
+  to the whole batch — simpler to use, but loses per-row nuance. Worth
+  revisiting if batches end up needing genuinely different resolution
+  reasons per row.
+- **Escalate**: `escalateReconciliationRecord()` just flips status to
+  `escalated`; it doesn't yet create the client-portal document-request task
+  the spec describes (§7.2) — that depends on the Client Portal surface,
+  which isn't built.
 
-```bash
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
-  cloudscheduler.googleapis.com secretmanager.googleapis.com \
-  --project=YOUR_GCP_PROJECT_ID
-```
+- **Auth linkage**: `staff.auth_user_id` is set by a Postgres trigger on
+  `auth.users` insert (migration 0004), not by any client code — it fires
+  whichever order the two rows show up in (staff row created first via the
+  Team page, or an auth account somehow existing first). Nothing in the
+  app ever calls `.update({ auth_user_id })` directly.
+- **invite-staff Edge Function**: the only place the service-role key is
+  used. It re-derives the caller's identity and role from their own JWT
+  server-side before doing anything — it never trusts a `role` or
+  `firm_id` passed in the request body, so a client can't invite someone
+  into a different firm or grant themselves admin by editing the request.
 
-Store secrets in Secret Manager (never bake these into the container image):
+- **Ingestion pipeline auth**: three-step chain, each step only as
+  privileged as it needs to be. `request-pairing-code` needs a logged-in
+  Admin/Partner/Audit Manager (checks their staff row + firm before issuing
+  a code). `agent-pair` needs only a valid, unused, unexpired pairing code
+  — no user session, since the agent isn't a user. `ingest-tally-sync`
+  needs the bearer token `agent-pair` returned, hashed and checked against
+  `tally_agent_tokens`; the raw token is shown to the agent exactly once
+  and only its SHA-256 hash is ever stored.
+- **Ingestion is synchronous, not queued**: `ingest-tally-sync` upserts
+  directly rather than enqueueing a background job, which is a reasonable
+  simplification at the payload sizes a single Tally company produces. The
+  spec's Queue Worker step (§3.3) becomes worth adding — e.g. via the
+  `pgmq` Postgres extension — if sync volume grows enough to need real
+  async retry/backoff; the agent-facing HTTP contract wouldn't need to
+  change to add that later.
+- **What's NOT built**: the actual Sync Agent binary (spec §8, a separate
+  Windows-service codebase) that would call these functions, and the
+  GSTR-2B-vs-Tally reconciliation matching logic itself (spec §4.1) — that
+  needs GST portal API access via the (still-unencrypted) credentials
+  vault, which is a materially bigger feature on its own.
 
-```bash
-gcloud secrets create ca-firm-sa-key --data-file=service-account.json
-echo -n "YOUR_GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
-echo -n "YOUR_WHATSAPP_ACCESS_TOKEN" | gcloud secrets create whatsapp-access-token --data-file=-
-echo -n "YOUR_WHATSAPP_WEBHOOK_VERIFY_TOKEN" | gcloud secrets create whatsapp-verify-token --data-file=-
-echo -n "YOUR_GOOGLE_CHAT_WEBHOOK_URL" | gcloud secrets create google-chat-webhook --data-file=-
-python3 -c "import secrets; print(secrets.token_urlsafe(32))" | \
-  gcloud secrets create scheduler-shared-secret --data-file=-
-```
-
-(Grab the generated value from that last command's output — you'll pass
-the same string to every Cloud Scheduler job below.)
-
-Build and deploy straight from source (Cloud Build picks up the
-`Dockerfile` automatically):
-
-```bash
-gcloud run deploy ca-firm-automation \
-  --source . \
-  --region=asia-south1 \
-  --allow-unauthenticated \
-  --set-env-vars="FIRM_NAME=Your CA Firm Name,GOOGLE_IMPERSONATE_EMAIL=team@yourfirm.com,GOOGLE_SPREADSHEET_ID=your_sheet_id,GEMINI_MODEL=gemini-3.6-flash,GOOGLE_CALENDAR_ID=primary" \
-  --set-secrets="/secrets/service-account.json=ca-firm-sa-key:latest,GEMINI_API_KEY=gemini-api-key:latest,WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,WHATSAPP_WEBHOOK_VERIFY_TOKEN=whatsapp-verify-token:latest,GOOGLE_CHAT_WEBHOOK_URL=google-chat-webhook:latest,SCHEDULER_SHARED_SECRET=scheduler-shared-secret:latest" \
-  --set-env-vars="GOOGLE_SERVICE_ACCOUNT_FILE=/secrets/service-account.json,WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id"
-```
-
-`--allow-unauthenticated` is required — Meta, your payment gateway, and
-your website need to reach `/webhooks/*` without a GCP identity. The
-`/internal/*` routes are protected at the application layer instead (the
-`X-Internal-Secret` header check in `app.py`).
-
-Grab the deployed URL:
-
-```bash
-SERVICE_URL=$(gcloud run services describe ca-firm-automation --region=asia-south1 --format='value(status.url)')
-echo $SERVICE_URL
-```
-
-Create the 5 Cloud Scheduler jobs (replace `YOUR_SECRET` with the value
-from `scheduler-shared-secret` above):
-
-```bash
-gcloud scheduler jobs create http gmail-poll \
-  --schedule="* * * * *" --uri="$SERVICE_URL/internal/gmail-poll" \
-  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
-  --time-zone="Asia/Kolkata" --location=asia-south1
-
-gcloud scheduler jobs create http compliance-reminders \
-  --schedule="0 9 * * *" --uri="$SERVICE_URL/internal/compliance-reminders" \
-  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
-  --time-zone="Asia/Kolkata" --location=asia-south1
-
-gcloud scheduler jobs create http document-followup \
-  --schedule="30 9 * * *" --uri="$SERVICE_URL/internal/document-followup" \
-  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
-  --time-zone="Asia/Kolkata" --location=asia-south1
-
-gcloud scheduler jobs create http lead-followup \
-  --schedule="0 10 * * *" --uri="$SERVICE_URL/internal/lead-followup" \
-  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
-  --time-zone="Asia/Kolkata" --location=asia-south1
-
-gcloud scheduler jobs create http invoice-followup \
-  --schedule="30 10 * * *" --uri="$SERVICE_URL/internal/invoice-followup" \
-  --http-method=POST --headers="X-Internal-Secret=YOUR_SECRET" \
-  --time-zone="Asia/Kolkata" --location=asia-south1
-```
-
-Point Meta's webhook, your payment gateway, and your website form at
-`$SERVICE_URL/webhooks/...` (same paths as before). Test with
-`curl $SERVICE_URL/health`.
-
-**Cost reality check**: Cloud Run itself will sit comfortably inside the
-free tier at this traffic level ($0). Cloud Scheduler gives 3 free jobs
-per billing account per month; this setup needs 5, so expect roughly
-**$0.20/month** for the 2 jobs beyond the free allotment — not literally
-zero, but as close as it gets.
-
-**Behavioural note**: unlike the VM version, the WhatsApp webhook now
-processes each message synchronously (LLM call + Sheets/WhatsApp calls)
-before replying to Meta, instead of ack-then-background-process. Still
-typically a few seconds — see `app.py`'s docstring for the full reasoning.
-
-**Option B: GCP VM (systemd — same pattern as the trading bot)**
-
-```bash
-# on the VM
-git clone <this-repo> ca-firm-automation
-cd ca-firm-automation
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-cp .env.example .env            # fill in real values
-# upload service-account.json into this directory too
-sudo cp deploy/ca-firm-automation.service /etc/systemd/system/
-sudo sed -i 's/YOUR_LINUX_USER/'"$USER"'/g' /etc/systemd/system/ca-firm-automation.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now ca-firm-automation
-sudo systemctl status ca-firm-automation
-```
-
-Expose it publicly (Nginx reverse proxy + TLS, or a tunnel like the
-existing `parsley-walk-operator.ngrok-free.dev` pattern) so Meta and your
-payment gateway can reach the webhooks. Note: this VM-path `app.py`
-history (background thread + in-process APScheduler) was superseded by
-the Cloud Run rebuild above — if you go this route instead, you'd want to
-reintroduce that always-on scheduling pattern rather than relying on the
-current request-driven `/internal/*` routes, since nothing will ever call
-them without Cloud Scheduler in the picture.
-
-## Dashboard
-
-`/dashboard` — a key-gated staff page showing live data: client count,
-compliance deadlines, leads, invoices, documents, all pulled straight from
-the Sheet via `/api/dashboard-data`. Requires `DASHBOARD_ACCESS_KEY` set
-in the environment; the page prompts for it once and remembers it in the
-browser.
-
-This intentionally shows only fields the backend actually tracks. An
-earlier mockup of this dashboard (a static HTML file, not connected to
-anything) included invented fields like a lead's "deal value" or an
-in-progress "AI qualification %" that this system doesn't collect — those
-were left out here rather than faked. If you want either of those as real
-tracked fields, that's a schema change (`services/sheets_db.py` +
-`setup_sheets.py`) plus wiring into the relevant branch, not just a
-dashboard change.
-
-## Differences from the original n8n workflow- **Data store**: a real Google Sheet with a defined schema per tab
-  (`services/sheets_db.py`), created via `setup_sheets.py` instead of
-  hand-built.
-- **Auth model**: one service account with domain-wide delegation instead
-  of four separate per-service OAuth credentials (Gmail OAuth2, Sheets
-  OAuth2, Telegram bot token, WhatsApp header-auth token) — WhatsApp still
-  needs its own Meta token since it isn't a Google product.
-- **Document storage**: the original never actually downloaded WhatsApp
-  media, it only flipped a status flag. This port downloads it and saves
-  it into a per-client Drive folder, with the file link written back onto
-  the `Documents_Tracker` row.
-- **Compliance deadlines**: also mirrored into Google Calendar as real
-  events with reminders (`calendar_event_id` column links each sheet row
-  to its event), not just sheet rows.
-- **Partner alerts**: Google Chat webhook instead of a Telegram bot.
-- **LLM**: Gemini (`gemini-3.6-flash` by default, configurable) instead of
-  Groq/Llama.
-- **Compute + scheduling**: Cloud Run (serverless, request-driven) instead
-  of n8n's always-on workflow engine. The original's "fast ack, then
-  process in the background" pattern for the WhatsApp webhook doesn't fit
-  Cloud Run's execution model (background threads aren't reliable once a
-  request finishes), so that branch now processes synchronously within
-  the request instead — see `app.py`'s docstring. The 4 daily jobs run
-  via Cloud Scheduler hitting authenticated `/internal/*` routes rather
-  than an in-process scheduler.
-- Everything else — prompts, reminder-stage thresholds (7d/3d/1d/due-today/
-  overdue for compliance; 3d/due-today/1-7d/8-15d/15d+ for invoices;
-  3-day gap + escalate-at-3 for documents; 4-attempt cold-close for leads)
-  — is a direct, faithful port of the original workflow's logic.
-
-## Operational notes
-
-- **Sheets concurrency**: every read scans the full tab and every write
-  is a read-modify-write. Fine at a single small CA firm's data volume;
-  not something to scale to thousands of rows without moving hot tables
-  (in particular `Conversation_Memory`) to a real database later.
-- **`Conversation_Memory` grows unbounded** — it's an append-only log of
-  every AI chat turn, never pruned. Periodically archive/delete old rows
-  (e.g. anything older than 90 days) if the tab starts feeling sluggish.
-- **Gemini model deprecations**: Google retires Gemini model versions on
-  a rolling basis (see `ai.google.dev/gemini-api/docs/changelog`). If
-  `GEMINI_MODEL` ever starts erroring, check that page and bump the env var.
-
-## Not yet built
-
-- Editing from the dashboard — `/dashboard` is read-only; editing clients,
-  compliance rows, invoices, etc. still happens directly in the Sheet
-  (or you could add write endpoints later, protected the same way as
-  `/internal/*`).
-- Task management, revenue/analytics reporting, a live conversation
-  viewer for WhatsApp/email chats — none of these have backend support;
-  the dashboard says so plainly rather than showing fake numbers for them.
-- Any Vertex AI / GCP-billing variant of the Gemini calls — this uses the
-  simpler Gemini Developer API (`GEMINI_API_KEY`), billed against your
-  Google AI Studio paid tier. Swappable in `services/llm.py` if you'd
-  rather route Gemini calls through Vertex AI and GCP billing instead.
+## Next steps
+The sidebar tabs on Client Detail (Documents, Credential Vault, Tally Sync,
+Filings, Tasks, Billing, Activity) are the most visible remaining gap in
+the CA-facing app. Beyond that, the two largest unbuilt pieces are the
+actual Sync Agent (a separate codebase per spec §8) and the GSTR-2B
+reconciliation matching logic (§4.1), which depends on decrypting and
+calling out to the GST portal via the credentials vault.
