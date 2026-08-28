@@ -2,11 +2,13 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/auth';
 import { AppShell } from './components/layout/AppShell';
 import { RequireAuth } from './components/layout/RequireAuth';
+import { ClientDetailShell } from './components/layout/ClientDetailShell';
 import { Login } from './pages/Login';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { Dashboard } from './pages/Dashboard';
 import { ClientList } from './pages/ClientList';
-import { ClientDetail } from './pages/ClientDetail';
+import { ClientOverview } from './pages/ClientOverview';
+import { ClientDocuments } from './pages/ClientDocuments';
 import { ReconciliationCenter } from './pages/ReconciliationCenter';
 import { ReconciliationDetail } from './pages/ReconciliationDetail';
 import { Team } from './pages/Team';
@@ -24,7 +26,10 @@ export function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/clients" element={<ClientList />} />
-              <Route path="/clients/:id" element={<ClientDetail />} />
+              <Route path="/clients/:id" element={<ClientDetailShell />}>
+                <Route index element={<ClientOverview />} />
+                <Route path="documents" element={<ClientDocuments />} />
+              </Route>
               <Route path="/team" element={<Team />} />
               <Route path="/tally" element={<ComingSoon title="Tally Integration Hub" />} />
               <Route path="/tally/reconciliation" element={<ReconciliationCenter />} />

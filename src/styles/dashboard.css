@@ -187,11 +187,17 @@
   padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-sm);
   cursor: default;
+  text-decoration: none;
+  display: block;
 }
 .sidebar__item--active {
   color: var(--ink);
   background: var(--gold-bg);
   font-weight: 500;
+}
+.sidebar__item--disabled {
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 .detail-main {
