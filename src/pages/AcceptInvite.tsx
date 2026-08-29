@@ -36,8 +36,8 @@ export function AcceptInvite() {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <h1 className="auth-card__title">Invite link expired</h1>
-          <p className="auth-card__subtitle">Ask your firm admin to send a new invite.</p>
+          <h1 className="auth-card__title">Link expired or already used</h1>
+          <p className="auth-card__subtitle">Request a new invite, or use "Forgot password?" on the sign-in page.</p>
         </div>
       </div>
     );
