@@ -90,7 +90,18 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: `Failed to create staff row: ${staffErr.message}` }), { status: 500 });
   }
 
-  const { error: inviteErr } = await adminClient.auth.admin.inviteUserByEmail(email);
+  // Explicit redirectTo, not the Supabase Auth "Site URL" default — that
+  // default points at the app root, which signs the person straight into
+  // a session without ever routing them through a page that calls
+  // updateUser(). Landing here instead means they always set a real
+  // password as part of accepting the invite.
+  const siteUrl = Deno.env.get('SITE_URL');
+  if (!siteUrl) {
+    return new Response(JSON.stringify({ error: 'SITE_URL is not configured on this function' }), { status: 500 });
+  }
+  const redirectTo = new URL('accept-invite', siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`).toString();
+
+  const { error: inviteErr } = await adminClient.auth.admin.inviteUserByEmail(email, { redirectTo });
   if (inviteErr) {
     return new Response(JSON.stringify({ error: `Staff row created, but invite email failed: ${inviteErr.message}` }), {
       status: 502,
