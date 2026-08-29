@@ -466,6 +466,138 @@ export async function resolveReconciliationRecord(
   if (error) throw error;
 }
 
+// ---------- Filings (full list, for the Filings tab) ----------
+
+export async function listFilingsForClient(clientId: string): Promise<Filing[]> {
+  const { data, error } = await supabase
+    .from('filings')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('due_date', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// ---------- Credential Vault (metadata only — never selects the
+// encrypted secret columns; there is nothing client code can safely do
+// with ciphertext it can't decrypt anyway) ----------
+
+export interface CredentialMeta {
+  id: string;
+  portal_type: string;
+  last_verified_at: string | null;
+  access_scope: string[];
+}
+
+export async function listCredentialMetaForClient(clientId: string): Promise<CredentialMeta[]> {
+  const { data, error } = await supabase
+    .from('credentials_vault')
+    .select('id, portal_type, last_verified_at, access_scope')
+    .eq('client_id', clientId)
+    .order('portal_type');
+  if (error) throw error;
+  return data;
+}
+
+// ---------- Tally Sync tab: full sync config + ledger explorer ----------
+
+export interface TallySyncFull extends TallySyncConfig {
+  agent_status: string | null;
+  agent_last_heartbeat: string | null;
+  agent_version: string | null;
+}
+
+export async function getTallySyncForClient(clientId: string): Promise<TallySyncFull | null> {
+  const { data, error } = await supabase
+    .from('tally_sync_configs')
+    .select('*, tally_sync_agents(status, last_heartbeat_at, agent_version)')
+    .eq('client_id', clientId)
+    .maybeSingle()
+    .returns<
+      | (TallySyncConfig & {
+          tally_sync_agents: { status: string; last_heartbeat_at: string | null; agent_version: string | null } | null;
+        })
+      | null
+    >();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    ...data,
+    agent_status: data.tally_sync_agents?.status ?? null,
+    agent_last_heartbeat: data.tally_sync_agents?.last_heartbeat_at ?? null,
+    agent_version: data.tally_sync_agents?.agent_version ?? null,
+  };
+}
+
+export interface TallyLedgerRow {
+  id: string;
+  ledger_name: string;
+  ledger_group: string | null;
+  opening_balance: number;
+  closing_balance: number;
+  balance_type: 'dr' | 'cr' | null;
+  synced_at: string;
+}
+
+export async function listLedgersForSyncConfig(syncConfigId: string): Promise<TallyLedgerRow[]> {
+  const { data, error } = await supabase
+    .from('tally_ledgers')
+    .select('id, ledger_name, ledger_group, opening_balance, closing_balance, balance_type, synced_at')
+    .eq('sync_config_id', syncConfigId)
+    .order('ledger_name');
+  if (error) throw error;
+  return data;
+}
+
+// ---------- Billing tab ----------
+
+export interface InvoiceRow {
+  id: string;
+  total: number;
+  status: string;
+  issued_date: string | null;
+  due_date: string | null;
+}
+
+export async function listInvoicesForClient(clientId: string): Promise<InvoiceRow[]> {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, total, status, issued_date, due_date')
+    .eq('client_id', clientId)
+    .order('issued_date', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export interface TimeEntrySummary {
+  staff_id: string;
+  staff_name: string;
+  minutes_logged: number;
+  billable: boolean;
+}
+
+export async function listTimeEntriesForClient(clientId: string): Promise<TimeEntrySummary[]> {
+  interface RawRow {
+    staff_id: string;
+    minutes_logged: number;
+    billable: boolean;
+    staff: { name: string } | null;
+  }
+  const { data, error } = await supabase
+    .from('time_entries')
+    .select('staff_id, minutes_logged, billable, staff(name)')
+    .eq('client_id', clientId)
+    .order('entry_date', { ascending: false })
+    .returns<RawRow[]>();
+  if (error) throw error;
+  return data.map((r) => ({
+    staff_id: r.staff_id,
+    staff_name: r.staff?.name ?? 'Unknown',
+    minutes_logged: r.minutes_logged,
+    billable: r.billable,
+  }));
+}
+
 // ---------- Tasks ----------
 
 export async function listTasksForClient(clientId: string): Promise<Task[]> {
@@ -476,6 +608,11 @@ export async function listTasksForClient(clientId: string): Promise<Task[]> {
     .order('due_date', { ascending: true, nullsFirst: false });
   if (error) throw error;
   return data;
+}
+
+export async function updateTaskStatus(taskId: string, status: Task['status']): Promise<void> {
+  const { error } = await supabase.from('tasks').update({ status }).eq('id', taskId);
+  if (error) throw error;
 }
 
 export async function createTaskFromDiscrepancy(
