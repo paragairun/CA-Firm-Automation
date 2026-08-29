@@ -52,6 +52,30 @@ export async function listClients(): Promise<Client[]> {
   return data;
 }
 
+export interface NewClientInput {
+  entity_type: Client['entity_type'];
+  legal_name: string;
+  pan?: string;
+  gstins?: string[];
+  cin_llpin?: string;
+}
+
+export async function createClient(input: NewClientInput): Promise<Client> {
+  const { data, error } = await supabase
+    .from('clients')
+    .insert({
+      entity_type: input.entity_type,
+      legal_name: input.legal_name,
+      pan: input.pan || null,
+      gstins: input.gstins ?? [],
+      cin_llpin: input.cin_llpin || null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function getClient(clientId: string): Promise<Client> {
   const { data, error } = await supabase
     .from('clients')
