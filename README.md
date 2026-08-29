@@ -187,6 +187,18 @@ supabase db reset         # applies migrations + seed against the local stack
   whichever order the two rows show up in (staff row created first via the
   Team page, or an auth account somehow existing first). Nothing in the
   app ever calls `.update({ auth_user_id })` directly.
+- **Every Edge Function handles CORS preflight explicitly**
+  (`_shared/cors.ts`). This was a real bug, not preemptive caution: a
+  browser sends an `OPTIONS` preflight before any cross-origin POST
+  carrying an `Authorization` header — and that preflight never includes
+  Authorization (browsers strip it by design). Without explicit
+  handling, the platform's own JWT check rejected the *preflight* with
+  `UNAUTHORIZED_NO_AUTH_HEADER`, and the browser never got to send the
+  real, authenticated request at all. Symptom looked exactly like a
+  missing deploy or a broken function, when the function itself was
+  fine — the request never arrived. Every function now checks
+  `handleCorsPreflight(req)` first and merges `corsHeaders` into every
+  response, success or error.
 - **invite-staff Edge Function**: the only place the service-role key is
   used. It re-derives the caller's identity and role from their own JWT
   server-side before doing anything — it never trusts a `role` or
