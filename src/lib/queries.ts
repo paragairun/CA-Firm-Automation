@@ -12,6 +12,12 @@ export type Task = Tables['tasks']['Row'];
 export type ReconciliationRecord = Tables['reconciliation_records']['Row'];
 export type TallySyncConfig = Tables['tally_sync_configs']['Row'];
 
+export async function getFirmName(firmId: string): Promise<string> {
+  const { data, error } = await supabase.from('firms').select('name').eq('id', firmId).single();
+  if (error) throw error;
+  return data.name;
+}
+
 // ---------- Current Staff ----------
 
 export async function getCurrentStaffId(): Promise<string | null> {
