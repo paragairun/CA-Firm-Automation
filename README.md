@@ -56,7 +56,7 @@ per-component.
 npm install
 supabase login
 supabase link --project-ref <your-project-ref>
-supabase db push          # applies migrations 0001–0008
+supabase db push          # applies migrations 0001–0011
 supabase db seed          # optional: loads supabase/seed.sql for local dev
 supabase functions deploy invite-staff
 supabase functions deploy request-pairing-code
@@ -65,6 +65,7 @@ supabase functions deploy ingest-tally-sync
 supabase functions deploy save-credential
 supabase functions deploy reveal-credential
 supabase secrets set CREDENTIAL_ENCRYPTION_KEY=$(openssl rand -base64 32)
+supabase secrets set SITE_URL=https://<your-username>.github.io/<your-repo>/
 npm run db:types          # regenerates src/lib/database.types.ts from the live schema
 cp .env.example .env      # fill in VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 npm run dev
@@ -146,6 +147,17 @@ supabase db reset         # applies migrations + seed against the local stack
   server-side before doing anything — it never trusts a `role` or
   `firm_id` passed in the request body, so a client can't invite someone
   into a different firm or grant themselves admin by editing the request.
+- **Invite emails redirect to `/accept-invite`, not the app root.** This
+  needs an explicit `redirectTo` because Supabase Auth's default behavior
+  — used automatically if someone invites a user via the Supabase
+  Dashboard's own "Invite user" button instead of the app's Team page —
+  redirects to the Site URL setting, which signs the person straight into
+  a session at the app root *without ever routing them through a page
+  that sets a password*. `invite-staff` needs a `SITE_URL` Edge Function
+  secret to build the correct redirect, and fails loudly (500) rather
+  than silently falling back to the Dashboard's default if that secret
+  isn't set. The same reasoning is why `Login.tsx`'s password-reset flow
+  passes its own explicit `redirectTo` too.
 
 - **Ingestion pipeline auth**: three-step chain, each step only as
   privileged as it needs to be. `request-pairing-code` needs a logged-in
