@@ -66,7 +66,7 @@ export function ClientList() {
         const debug = debugRows?.[0];
         setFormError(
           debug
-            ? `${baseMessage} — debug: role=${debug.resolved_staff_role ?? 'null'}, firm_id=${debug.resolved_firm_id ?? 'null'}, matching_staff_rows=${debug.matching_staff_rows}, firm_exists=${debug.firm_row_exists}`
+            ? `${baseMessage} — debug: role=${debug.resolved_staff_role ?? 'null'}, firm_id=${debug.resolved_firm_id ?? 'null'}, trigger_firm_id=${debug.trigger_logic_firm_id ?? 'null'}, firm_id_check=${debug.firm_id_check_passes}, role_check=${debug.role_check_passes}, combined=${debug.combined_check_passes}, matching_staff_rows=${debug.matching_staff_rows}, firm_exists=${debug.firm_row_exists}`
             : baseMessage
         );
       } catch {
@@ -85,6 +85,36 @@ export function ClientList() {
       setRpcTestResult(`RPC insert succeeded — id: ${result.id}, firm_id: ${result.firm_id}`);
     } catch (err) {
       setRpcTestResult(`RPC insert failed — ${getErrorMessage(err)}`);
+    } finally {
+      setRpcTestBusy(false);
+    }
+  }
+
+  async function handleRawFetchTest() {
+    setRpcTestBusy(true);
+    setRpcTestResult(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new Error('No active session');
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+      const res = await fetch(`${supabaseUrl}/rest/v1/rpc/test_create_client`, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_entity_type: entityType, p_legal_name: `${legalName || 'raw fetch test'} (raw)` }),
+      });
+      const text = await res.text();
+      setRpcTestResult(`Raw fetch — HTTP ${res.status}: ${text}`);
+    } catch (err) {
+      setRpcTestResult(`Raw fetch threw — ${getErrorMessage(err)}`);
     } finally {
       setRpcTestBusy(false);
     }
@@ -158,6 +188,9 @@ export function ClientList() {
           <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-3)', borderTop: '1px dashed var(--paper-line)' }}>
             <button className="btn-link" type="button" disabled={rpcTestBusy} onClick={handleRpcTest}>
               {rpcTestBusy ? 'Testing…' : 'Debug: try insert via RPC instead'}
+            </button>
+            <button className="btn-link" type="button" disabled={rpcTestBusy} onClick={handleRawFetchTest} style={{ marginLeft: 'var(--space-3)' }}>
+              {rpcTestBusy ? 'Testing…' : 'Debug: raw fetch (bypass client library)'}
             </button>
             {rpcTestResult && (
               <p style={{ fontSize: 12, color: rpcTestResult.startsWith('RPC insert succeeded') ? 'var(--good)' : 'var(--bad)', marginTop: 'var(--space-2)' }}>
