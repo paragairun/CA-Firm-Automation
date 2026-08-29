@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useParams } from 'react-router-dom';
 import { getClient, type Client } from '../../lib/queries';
 
-const inertTabs = ['Credential Vault', 'Tally Sync', 'Filings', 'Tasks', 'Billing', 'Activity'];
+const inertTabs = ['Activity'];
 
 export function ClientDetailShell() {
   const { id } = useParams<{ id: string }>();
@@ -24,20 +24,24 @@ export function ClientDetailShell() {
     };
   }, [id]);
 
+  const navItem = (to: string, label: string, end = false) => (
+    <NavLink to={to} end={end} className={({ isActive }) => `sidebar__item${isActive ? ' sidebar__item--active' : ''}`}>
+      {label}
+    </NavLink>
+  );
+
   return (
     <div className="detail-layout">
       <nav className="sidebar" aria-label="Client sections">
-        <NavLink to={`/clients/${id}`} end className={({ isActive }) => `sidebar__item${isActive ? ' sidebar__item--active' : ''}`}>
-          Overview
-        </NavLink>
-        <NavLink
-          to={`/clients/${id}/documents`}
-          className={({ isActive }) => `sidebar__item${isActive ? ' sidebar__item--active' : ''}`}
-        >
-          Documents
-        </NavLink>
+        {navItem(`/clients/${id}`, 'Overview', true)}
+        {navItem(`/clients/${id}/documents`, 'Documents')}
+        {navItem(`/clients/${id}/credentials`, 'Credential Vault')}
+        {navItem(`/clients/${id}/tally-sync`, 'Tally Sync')}
+        {navItem(`/clients/${id}/filings`, 'Filings')}
+        {navItem(`/clients/${id}/tasks`, 'Tasks')}
+        {navItem(`/clients/${id}/billing`, 'Billing')}
         {inertTabs.map((tab) => (
-          <span key={tab} className="sidebar__item sidebar__item--disabled" title="Not built yet">
+          <span key={tab} className="sidebar__item sidebar__item--disabled" title="No activity log table yet">
             {tab}
           </span>
         ))}
