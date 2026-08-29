@@ -9,16 +9,20 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { sha256Hex } from '../_shared/tokens.ts';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get('Authorization');
   const token = authHeader?.replace(/^Bearer\s+/i, '');
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Missing bearer token' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing bearer token' }), { status: 401, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -32,7 +36,7 @@ Deno.serve(async (req: Request) => {
     .is('revoked_at', null)
     .maybeSingle();
   if (tokenErr || !tokenRow) {
-    return new Response(JSON.stringify({ error: 'Invalid or revoked token' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Invalid or revoked token' }), { status: 401, headers: corsHeaders });
   }
 
   const { data: syncConfig, error: syncErr } = await adminClient
@@ -41,7 +45,7 @@ Deno.serve(async (req: Request) => {
     .eq('agent_id', tokenRow.agent_id)
     .maybeSingle();
   if (syncErr) {
-    return new Response(JSON.stringify({ error: syncErr.message }), { status: 500 });
+    return new Response(JSON.stringify({ error: syncErr.message }), { status: 500, headers: corsHeaders });
   }
 
   return new Response(
@@ -51,6 +55,6 @@ Deno.serve(async (req: Request) => {
       sync_frequency: syncConfig?.sync_frequency ?? 'daily',
       write_back_enabled: syncConfig?.write_back_enabled ?? false,
     }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   );
 });
