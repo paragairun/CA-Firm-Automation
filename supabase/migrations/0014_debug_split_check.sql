@@ -1,3 +1,10 @@
+-- 0012 created this function with a different (smaller) return shape.
+-- CREATE OR REPLACE can't change a function's OUT-parameter structure —
+-- must drop first. Caught by running the real migration sequence via
+-- `db push`, not by testing this migration's SQL standalone via the SQL
+-- Editor during live debugging, which never re-ran 0012 first.
+drop function if exists debug_client_insert_context();
+
 create or replace function debug_client_insert_context()
 returns table(
   auth_uid uuid,
