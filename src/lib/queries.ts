@@ -76,6 +76,19 @@ export async function createClient(input: NewClientInput): Promise<Client> {
   return data;
 }
 
+// Temporary diagnostic (migration 0013) — inserts via a direct RPC call
+// instead of PostgREST's insert().select() pattern, under the same RLS
+// policies. Isolates whether a failure is REST-layer-specific or a real
+// policy/trigger problem.
+export async function testCreateClientViaRpc(entityType: Client['entity_type'], legalName: string) {
+  const { data, error } = await supabase.rpc('test_create_client', {
+    p_entity_type: entityType,
+    p_legal_name: legalName,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function getClient(clientId: string): Promise<Client> {
   const { data, error } = await supabase
     .from('clients')

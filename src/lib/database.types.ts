@@ -415,6 +415,10 @@ export interface Database {
           firm_row_exists: boolean;
         }[];
       };
+      test_create_client: {
+        Args: { p_entity_type: EntityType; p_legal_name: string };
+        Returns: Database['public']['Tables']['clients']['Row'];
+      };
     };
     Enums: Record<string, never>;
   };
