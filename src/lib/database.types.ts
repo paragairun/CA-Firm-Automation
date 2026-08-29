@@ -405,6 +405,16 @@ export interface Database {
           missing_in_portal_count: number;
         }[];
       };
+      debug_client_insert_context: {
+        Args: Record<string, never>;
+        Returns: {
+          auth_uid: string | null;
+          resolved_staff_role: string | null;
+          resolved_firm_id: string | null;
+          matching_staff_rows: number;
+          firm_row_exists: boolean;
+        }[];
+      };
     };
     Enums: Record<string, never>;
   };
