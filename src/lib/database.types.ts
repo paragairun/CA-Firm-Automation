@@ -272,6 +272,7 @@ export interface Database {
           opening_balance: number;
           closing_balance: number;
           balance_type: 'dr' | 'cr' | null;
+          gstin: string | null;
           raw_xml_ref: string | null;
           synced_at: string;
         };
@@ -355,9 +356,56 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['client_staff_assignments']['Row']>;
       Relationships: [];
       };
+      activity_log: {
+        Row: {
+          id: string;
+          firm_id: string;
+          client_id: string | null;
+          actor_id: string | null;
+          action: string;
+          summary: string;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['activity_log']['Row']> & { firm_id: string; action: string; summary: string };
+        Update: Partial<Database['public']['Tables']['activity_log']['Row']>;
+      Relationships: [];
+      };
+      gstr2b_line_items: {
+        Row: {
+          id: string;
+          firm_id: string;
+          client_id: string;
+          period: string;
+          supplier_gstin: string;
+          invoice_number: string;
+          invoice_date: string | null;
+          taxable_value: number;
+          tax_amount: number;
+          imported_by: string | null;
+          imported_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['gstr2b_line_items']['Row']> & {
+          client_id: string;
+          period: string;
+          supplier_gstin: string;
+          invoice_number: string;
+        };
+        Update: Partial<Database['public']['Tables']['gstr2b_line_items']['Row']>;
+      Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      run_gstr2b_reconciliation: {
+        Args: { p_client_id: string; p_period: string };
+        Returns: {
+          matched_count: number;
+          mismatch_count: number;
+          missing_in_tally_count: number;
+          missing_in_portal_count: number;
+        }[];
+      };
+    };
     Enums: Record<string, never>;
   };
 }

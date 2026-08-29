@@ -16,6 +16,7 @@ export interface LedgerRecord {
   opening_balance?: number;
   closing_balance?: number;
   balance_type?: 'dr' | 'cr';
+  gstin?: string;
 }
 
 export interface VoucherRecord {

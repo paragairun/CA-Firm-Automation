@@ -466,7 +466,28 @@ export async function resolveReconciliationRecord(
   if (error) throw error;
 }
 
-// ---------- Filings (full list, for the Filings tab) ----------
+// ---------- Activity Log ----------
+
+export interface ActivityLogRow {
+  id: string;
+  actor_id: string | null;
+  action: string;
+  summary: string;
+  created_at: string;
+}
+
+export async function listActivityForClient(clientId: string, limit = 50): Promise<ActivityLogRow[]> {
+  const { data, error } = await supabase
+    .from('activity_log')
+    .select('id, actor_id, action, summary, created_at')
+    .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+
 
 export async function listFilingsForClient(clientId: string): Promise<Filing[]> {
   const { data, error } = await supabase
@@ -536,17 +557,64 @@ export interface TallyLedgerRow {
   opening_balance: number;
   closing_balance: number;
   balance_type: 'dr' | 'cr' | null;
+  gstin: string | null;
   synced_at: string;
 }
 
 export async function listLedgersForSyncConfig(syncConfigId: string): Promise<TallyLedgerRow[]> {
   const { data, error } = await supabase
     .from('tally_ledgers')
-    .select('id, ledger_name, ledger_group, opening_balance, closing_balance, balance_type, synced_at')
+    .select('id, ledger_name, ledger_group, opening_balance, closing_balance, balance_type, gstin, synced_at')
     .eq('sync_config_id', syncConfigId)
     .order('ledger_name');
   if (error) throw error;
   return data;
+}
+
+// ---------- Tally Sync tab: agent binding ----------
+
+export interface AgentSummary {
+  id: string;
+  install_id: string;
+  agent_version: string | null;
+  status: string;
+  last_heartbeat_at: string | null;
+  bound: boolean;
+}
+
+// Every agent for a client, flagged with whether it's already bound to a
+// sync config — powers the "bind this agent to a Tally company" flow on
+// the Tally Sync tab (closes the gap the sync-agent README calls out:
+// pairing has a UI, but binding didn't until now).
+export async function listAgentsForClient(clientId: string): Promise<AgentSummary[]> {
+  const [agentsRes, configsRes] = await Promise.all([
+    supabase
+      .from('tally_sync_agents')
+      .select('id, install_id, agent_version, status, last_heartbeat_at')
+      .eq('client_id', clientId)
+      .order('last_heartbeat_at', { ascending: false }),
+    supabase.from('tally_sync_configs').select('agent_id').eq('client_id', clientId),
+  ]);
+  if (agentsRes.error) throw agentsRes.error;
+  if (configsRes.error) throw configsRes.error;
+
+  const boundAgentIds = new Set((configsRes.data ?? []).map((c) => c.agent_id).filter(Boolean));
+  return (agentsRes.data ?? []).map((a) => ({ ...a, bound: boundAgentIds.has(a.id) }));
+}
+
+export async function bindAgentToSyncConfig(
+  clientId: string,
+  agentId: string,
+  tallyCompanyName: string,
+  syncFrequency: 'realtime' | 'hourly' | 'daily'
+): Promise<void> {
+  const { error } = await supabase.from('tally_sync_configs').insert({
+    client_id: clientId,
+    agent_id: agentId,
+    tally_company_name: tallyCompanyName,
+    sync_frequency: syncFrequency,
+  });
+  if (error) throw error;
 }
 
 // ---------- Billing tab ----------

@@ -8,7 +8,7 @@
 // Auth: Authorization: Bearer <token issued by agent-pair>
 // Body: {
 //   sync_config_id: string,
-//   ledgers?: Array<{ ledger_name, ledger_group?, opening_balance?, closing_balance?, balance_type? }>,
+//   ledgers?: Array<{ ledger_name, ledger_group?, opening_balance?, closing_balance?, balance_type?, gstin? }>,
 //   vouchers?: Array<{ voucher_type, voucher_number, voucher_date, amount, party_ledger?, gst_taxable_value?, gst_amount? }>
 // }
 //
@@ -35,6 +35,7 @@ interface LedgerPayload {
   opening_balance?: number;
   closing_balance?: number;
   balance_type?: 'dr' | 'cr';
+  gstin?: string;
 }
 
 interface VoucherPayload {
@@ -131,6 +132,7 @@ Deno.serve(async (req: Request) => {
         opening_balance: l.opening_balance ?? 0,
         closing_balance: l.closing_balance ?? 0,
         balance_type: l.balance_type ?? null,
+        gstin: l.gstin ?? null,
         synced_at: new Date().toISOString(),
       }));
 

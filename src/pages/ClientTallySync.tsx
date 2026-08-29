@@ -1,6 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
-import { getTallySyncForClient, listLedgersForSyncConfig, type TallySyncFull, type TallyLedgerRow } from '../lib/queries';
+import {
+  getTallySyncForClient,
+  listLedgersForSyncConfig,
+  listAgentsForClient,
+  bindAgentToSyncConfig,
+  type TallySyncFull,
+  type TallyLedgerRow,
+  type AgentSummary,
+} from '../lib/queries';
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return 'never';
@@ -16,19 +24,48 @@ export function ClientTallySync() {
   const { id: clientId } = useParams<{ id: string }>();
   const [sync, setSync] = useState<TallySyncFull | null>(null);
   const [ledgers, setLedgers] = useState<TallyLedgerRow[]>([]);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Company-binding form state (only relevant while sync is null but an
+  // unbound paired agent exists — see the "Bind" section below).
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [frequency, setFrequency] = useState<'realtime' | 'hourly' | 'daily'>('daily');
+  const [binding, setBinding] = useState(false);
+
+  function load() {
     if (!clientId) return;
-    getTallySyncForClient(clientId)
-      .then(async (s) => {
+    setLoading(true);
+    Promise.all([getTallySyncForClient(clientId), listAgentsForClient(clientId)])
+      .then(async ([s, agentList]) => {
         setSync(s);
+        setAgents(agentList);
         if (s) setLedgers(await listLedgersForSyncConfig(s.id));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load Tally sync data.'))
       .finally(() => setLoading(false));
-  }, [clientId]);
+  }
+
+  useEffect(load, [clientId]);
+
+  async function handleBind(e: FormEvent) {
+    e.preventDefault();
+    if (!clientId || !selectedAgentId || !companyName.trim()) return;
+    setBinding(true);
+    setError(null);
+    try {
+      await bindAgentToSyncConfig(clientId, selectedAgentId, companyName.trim(), frequency);
+      setCompanyName('');
+      setSelectedAgentId('');
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to bind agent.');
+    } finally {
+      setBinding(false);
+    }
+  }
 
   if (error) {
     return (
@@ -46,11 +83,53 @@ export function ClientTallySync() {
     );
   }
 
+  const unboundAgents = agents.filter((a) => !a.bound);
+
   if (!sync) {
     return (
-      <div className="card">
-        <p className="card__empty">No Tally company connected yet — use "Connect Tally" on the Overview tab.</p>
-      </div>
+      <>
+        <div className="card" style={{ marginBottom: unboundAgents.length ? 'var(--space-4)' : 0 }}>
+          <p className="card__empty">No Tally company connected yet — use "Connect Tally" on the Overview tab.</p>
+        </div>
+
+        {unboundAgents.length > 0 && (
+          <form className="card invite-form" onSubmit={handleBind}>
+            <h2 className="card__title" style={{ marginBottom: 'var(--space-2)', fontSize: 14 }}>
+              Bind a paired agent to a Tally company
+            </h2>
+            <p style={{ fontSize: 12, color: 'var(--ink-faint)', margin: '0 0 var(--space-3)' }}>
+              {unboundAgents.length} agent{unboundAgents.length > 1 ? 's have' : ' has'} paired for this client but
+              {unboundAgents.length > 1 ? " aren't" : " isn't"} yet assigned to sync a specific Tally company.
+            </p>
+            <div className="invite-form__row">
+              <select className="search-input" value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} required>
+                <option value="">Select paired agent…</option>
+                {unboundAgents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.install_id.slice(0, 8)} · {a.status} · v{a.agent_version ?? '?'}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="search-input"
+                style={{ width: 220 }}
+                placeholder="Exact Tally company name"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                required
+              />
+              <select className="search-input" value={frequency} onChange={(e) => setFrequency(e.target.value as typeof frequency)}>
+                <option value="daily">Daily</option>
+                <option value="hourly">Hourly</option>
+                <option value="realtime">Realtime</option>
+              </select>
+              <button className="btn-link" type="submit" disabled={binding}>
+                {binding ? 'Binding…' : 'Bind'}
+              </button>
+            </div>
+          </form>
+        )}
+      </>
     );
   }
 
@@ -96,6 +175,7 @@ export function ClientTallySync() {
               <tr>
                 <th>Ledger</th>
                 <th>Group</th>
+                <th>GSTIN</th>
                 <th>Opening</th>
                 <th>Closing</th>
                 <th>Type</th>
@@ -106,6 +186,7 @@ export function ClientTallySync() {
                 <tr key={l.id}>
                   <td>{l.ledger_name}</td>
                   <td style={{ color: 'var(--ink-faint)', fontSize: 12 }}>{l.ledger_group ?? '—'}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{l.gstin ?? '—'}</td>
                   <td className="mono">{l.opening_balance.toLocaleString('en-IN')}</td>
                   <td className="mono">{l.closing_balance.toLocaleString('en-IN')}</td>
                   <td className="mono" style={{ textTransform: 'uppercase', fontSize: 11 }}>

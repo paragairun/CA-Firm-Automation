@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useParams } from 'react-router-dom';
 import { getClient, type Client } from '../../lib/queries';
 
-const inertTabs = ['Activity'];
+const inertTabs: string[] = [];
 
 export function ClientDetailShell() {
   const { id } = useParams<{ id: string }>();
@@ -40,6 +40,7 @@ export function ClientDetailShell() {
         {navItem(`/clients/${id}/filings`, 'Filings')}
         {navItem(`/clients/${id}/tasks`, 'Tasks')}
         {navItem(`/clients/${id}/billing`, 'Billing')}
+        {navItem(`/clients/${id}/activity`, 'Activity')}
         {inertTabs.map((tab) => (
           <span key={tab} className="sidebar__item sidebar__item--disabled" title="No activity log table yet">
             {tab}

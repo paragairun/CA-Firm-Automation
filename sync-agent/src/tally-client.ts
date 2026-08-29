@@ -91,12 +91,19 @@ export async function fetchLedgers(endpoint: string, companyName: string): Promi
       if (!name) return null;
       const closing = parseBalance(node.CLOSINGBALANCE);
       const opening = parseBalance(node.OPENINGBALANCE ?? 0);
+      // GSTIN tag name is another unverified guess (see file header) —
+      // Tally's ledger master typically carries this under a party GST
+      // details block; checking a few plausible flat-tag variants here
+      // since the exact nesting depends on Tally version/TDL. Adjust
+      // against real output.
+      const gstin = String(node.PARTYGSTIN ?? node.GSTIN ?? node.GSTREGISTRATIONNUMBER ?? '').trim() || undefined;
       return {
         ledger_name: name,
         ledger_group: node.PARENT ? String(node.PARENT) : undefined,
         opening_balance: opening.value,
         closing_balance: closing.value,
         balance_type: closing.type,
+        gstin,
       };
     })
     .filter((r: LedgerRecord | null): r is LedgerRecord => r !== null);

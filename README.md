@@ -212,27 +212,31 @@ supabase db reset         # applies migrations + seed against the local stack
   project defines itself — **not** the government portal's actual export
   format. A real deployment needs an adapter that maps the portal's raw
   JSON/Excel export into this shape before upload.
-- **Matching key is invoice number only, not GSTIN + invoice number.**
-  `tally_vouchers` has no supplier-GSTIN column — that lives on the
-  ledger master, and this schema doesn't join voucher → ledger → GSTIN
-  yet. `run_gstr2b_reconciliation()` matches on invoice number alone,
-  scoped to one client + one month, which is a reasonable approximation
-  (duplicate invoice numbers across different suppliers in the same
-  month-client are uncommon) but is a real simplification of the spec's
-  algorithm — see the migration's comments for the full reasoning.
+- **Matching now uses GSTIN when it's available, invoice number always.**
+  `tally_ledgers.gstin` (added in `0009_gstin_matching.sql`) is populated
+  from the Sync Agent's ledger export and joined from voucher → ledger by
+  party name. When both sides have a GSTIN and they disagree, that pair
+  is downgraded from `matched` to `mismatch` even if the amounts agree —
+  a real discrepancy, not just a rounding difference. When a voucher's
+  party ledger hasn't been GSTIN-tagged yet (e.g. right after this
+  migration runs, before ledgers re-sync), it still matches on invoice
+  number alone rather than being excluded. This is closer to the spec's
+  algorithm than the original invoice-number-only version, but still not
+  a strict (GSTIN, invoice_number) join — see the migration's comments.
 - **Re-running reconciliation preserves resolved/escalated rows.** The
   matching function only deletes and regenerates rows still in an open
   state (`matched`/`mismatch`/`missing_in_tally`/`missing_in_portal`/
   `under_review`) for that client+period — a CA's completed resolution
   work isn't wiped out by a re-import.
 
-- **Activity log is scoped, not comprehensive.** Four table triggers
-  cover filing status changes, task status changes, document uploads, and
-  reconciliation resolutions; credential save/reveal events are logged
-  separately, directly by their Edge Functions (see above) — together
-  these satisfy the spirit of the spec's access-logging requirement (§6)
-  for credentials specifically, but the log as a whole still isn't a
-  comprehensive audit trail of every write to every table.
+- **Activity log now covers seven event kinds**, not four: the original
+  filing/task status changes, document uploads, and reconciliation
+  resolutions, plus (as of `0010_activity_log_extended.sql`) task
+  creation, filing creation, and Tally write-back job status changes.
+  Credential save/reveal events are logged separately, directly by their
+  Edge Functions. Still deliberately scoped, not a comprehensive audit
+  trail of every write to every table — that line hasn't moved, only how
+  much sits on the "covered" side of it.
 
 - **Sync Agent is a separate Node.js package (`sync-agent/`), not part of
   the web app's build or deploy.** Its request-building and response-
@@ -240,28 +244,40 @@ supabase db reset         # applies migrations + seed against the local stack
   Tally server in this repo, confirming the code itself runs correctly —
   it was **not** verified against a real Tally Prime installation, since
   none was available. The file's header comment flags exactly which
-  assumptions (XML tag names, balance-sign convention) are most likely to
-  need adjustment once it's run against actual Tally output. See
-  `sync-agent/README.md` for the full breakdown of what's tested vs. not,
-  and for two known gaps: no dedicated web-app UI yet for binding an
-  agent to a Tally company after pairing (works, just requires a manual
-  DB row today), and no Windows-service wrapper included (documented
-  as a `node-windows`/NSSM setup step, not shipped).
+  assumptions (XML tag names, balance-sign convention, and now the GSTIN
+  tag name too) are most likely to need adjustment once it's run against
+  actual Tally output. Two gaps from the first pass are now closed: the
+  Client Detail Tally Sync tab has a real "bind this agent to a Tally
+  company" form (`ClientTallySync.tsx`) instead of requiring a manual DB
+  row, and `sync-agent/scripts/install-windows-service.js` actually
+  registers the agent as a Windows service via `node-windows` instead of
+  only describing the steps in prose. A status CLI (`npm run status`)
+  substitutes for the spec's system-tray companion app, which needs
+  native GUI bindings this package doesn't take on.
 
 ## Current state
 Every component named in the original spec now has a working
-implementation somewhere in this repo. What's left is less about missing
-features and more about the caveats called out throughout this file —
-worth reading before treating any of them as production-ready as-is:
+implementation somewhere in this repo, including the two structural gaps
+(company-binding UI, Windows-service registration) called out after the
+first full pass. What's left is a smaller, more specific set of caveats
+than before — worth reading before treating any of them as
+production-ready as-is:
 
-- The Credential Vault's single shared encryption key vs. the spec's
-  per-firm KMS separation.
-- GSTR-2B matching by invoice number alone, and its manual-JSON-import
-  staging step in place of a real GSP/portal integration.
-- The Sync Agent's Tally XML parsing, unverified against a real instance.
+- **Not attempted, and said so rather than faked**: per-firm KMS key
+  separation for the Credential Vault. This needs real cloud KMS
+  infrastructure (AWS KMS, GCP KMS, or Supabase Vault) to implement
+  meaningfully — building "KMS integration" code with no actual KMS to
+  test it against would just be more unverified code carrying a security
+  claim, the exact pattern this project has tried to avoid throughout.
+  The single-shared-key approach in place is a real improvement over
+  plaintext and is clearly labeled as short of the spec's target.
+- GSTR-2B's manual-JSON-import staging step in place of a real GSP/portal
+  integration — matching itself now uses GSTIN when available (see
+  above), but the data still arrives by hand, not from a live API.
+- The Sync Agent's Tally XML parsing, unverified against a real instance
+  — the single biggest remaining unknown, since it's the one piece
+  nothing in this environment could actually test end-to-end.
 - The Activity log's intentionally scoped (not comprehensive) coverage.
-- No company-binding UI, no Windows-service wrapper, no system-tray
-  companion app.
 
 None of these are silent gaps — each is flagged in code comments and in
 this README at the point where it matters, so picking any one up next

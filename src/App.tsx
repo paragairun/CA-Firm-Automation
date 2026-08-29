@@ -14,6 +14,7 @@ import { ClientTallySync } from './pages/ClientTallySync';
 import { ClientFilings } from './pages/ClientFilings';
 import { ClientTasks } from './pages/ClientTasks';
 import { ClientBilling } from './pages/ClientBilling';
+import { ClientActivity } from './pages/ClientActivity';
 import { ReconciliationCenter } from './pages/ReconciliationCenter';
 import { ReconciliationDetail } from './pages/ReconciliationDetail';
 import { Team } from './pages/Team';
@@ -21,7 +22,10 @@ import { ComingSoon } from './pages/ComingSoon';
 
 export function App() {
   return (
-    <BrowserRouter>
+    // basename comes from Vite's BASE_URL (set via `base` in vite.config.ts)
+    // rather than being hardcoded here — the two must always agree, and
+    // this way there's only one place that knows the deployed subpath.
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -39,6 +43,7 @@ export function App() {
                 <Route path="filings" element={<ClientFilings />} />
                 <Route path="tasks" element={<ClientTasks />} />
                 <Route path="billing" element={<ClientBilling />} />
+                <Route path="activity" element={<ClientActivity />} />
               </Route>
               <Route path="/team" element={<Team />} />
               <Route path="/tally" element={<ComingSoon title="Tally Integration Hub" />} />

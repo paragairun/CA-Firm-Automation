@@ -11,8 +11,12 @@
     "build": "tsc -b",
     "pair": "node dist/pair.js",
     "start": "node dist/index.js",
+    "status": "node dist/status.js",
     "dev:pair": "tsx src/pair.ts",
-    "dev:start": "tsx src/index.ts"
+    "dev:start": "tsx src/index.ts",
+    "dev:status": "tsx src/status.ts",
+    "service:install": "node scripts/install-windows-service.js install",
+    "service:uninstall": "node scripts/install-windows-service.js uninstall"
   },
   "dependencies": {
     "fast-xml-parser": "^4.5.0"
