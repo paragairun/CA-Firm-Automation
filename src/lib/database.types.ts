@@ -61,7 +61,7 @@ export interface Database {
           created_at: string;
           updated_at: string;
         };
-        Insert: Partial<Database['public']['Tables']['clients']['Row']> & { firm_id: string; entity_type: EntityType; legal_name: string };
+        Insert: Partial<Database['public']['Tables']['clients']['Row']> & { entity_type: EntityType; legal_name: string };
         Update: Partial<Database['public']['Tables']['clients']['Row']>;
       Relationships: [];
       };
