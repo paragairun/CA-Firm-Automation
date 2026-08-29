@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local env files — real credentials belong here, never in .env.example,
+# and never committed. The deployed site gets its credentials from GitHub
+# repository secrets instead (see .github/workflows/deploy.yml).
+.env
+.env.local
+.env.*.local
+
+# Sync agent's local paired state (per-machine, never shared)
+.practiceos-agent/
+
+# Editor/OS
+.DS_Store
+*.local
+
+# TypeScript build info
+*.tsbuildinfo
