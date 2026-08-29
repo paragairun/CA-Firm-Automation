@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { listClients, createClient, testCreateClientViaRpc, type Client, type NewClientInput } from '../lib/queries';
 import { supabase } from '../lib/supabaseClient';
+import { getErrorMessage } from '../lib/errors';
 
 const entityLabels: Record<string, string> = {
   individual: 'Individual',
@@ -32,7 +33,7 @@ export function ClientList() {
     setLoading(true);
     listClients()
       .then(setClients)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load clients.'))
+      .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setLoading(false));
   }
 
@@ -56,7 +57,7 @@ export function ClientList() {
       // etc.), not staring at the list again.
       navigate(`/clients/${created.id}`);
     } catch (err) {
-      const baseMessage = err instanceof Error ? err.message : 'Failed to create client.';
+      const baseMessage = getErrorMessage(err);
       // Temporary diagnostic (migration 0012) — reports exactly what the
       // RLS policy saw for this session, appended right in the error so
       // there's no separate step to run it manually.
@@ -83,7 +84,7 @@ export function ClientList() {
       const result = await testCreateClientViaRpc(entityType, `${legalName || 'RPC test'} (via RPC)`);
       setRpcTestResult(`RPC insert succeeded — id: ${result.id}, firm_id: ${result.firm_id}`);
     } catch (err) {
-      setRpcTestResult(`RPC insert failed — ${err instanceof Error ? err.message : String(err)}`);
+      setRpcTestResult(`RPC insert failed — ${getErrorMessage(err)}`);
     } finally {
       setRpcTestBusy(false);
     }
