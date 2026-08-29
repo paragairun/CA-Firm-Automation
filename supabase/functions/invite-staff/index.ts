@@ -10,6 +10,7 @@
 // role or firm_id passed in the request body).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 interface InvitePayload {
   email: string;
@@ -18,13 +19,16 @@ interface InvitePayload {
 }
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -41,7 +45,7 @@ Deno.serve(async (req: Request) => {
     error: userErr,
   } = await callerClient.auth.getUser();
   if (userErr || !user) {
-    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: corsHeaders });
   }
 
   // Service-role client — only used after the caller's identity and role
@@ -56,22 +60,22 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (callerErr || !callerStaff) {
-    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403, headers: corsHeaders });
   }
   if (!['admin', 'partner'].includes(callerStaff.role)) {
-    return new Response(JSON.stringify({ error: 'Only Admin or Partner can invite staff' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Only Admin or Partner can invite staff' }), { status: 403, headers: corsHeaders });
   }
 
   let payload: InvitePayload;
   try {
     payload = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
   }
 
   const { email, name, role } = payload;
   if (!email || !name || !role) {
-    return new Response(JSON.stringify({ error: 'email, name, and role are required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'email, name, and role are required' }), { status: 400, headers: corsHeaders });
   }
 
   // Create (or reuse) the staff row first — the auth.users insert trigger
@@ -87,7 +91,7 @@ Deno.serve(async (req: Request) => {
     .single();
 
   if (staffErr) {
-    return new Response(JSON.stringify({ error: `Failed to create staff row: ${staffErr.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Failed to create staff row: ${staffErr.message}` }), { status: 500, headers: corsHeaders });
   }
 
   // Explicit redirectTo, not the Supabase Auth "Site URL" default — that
@@ -97,7 +101,7 @@ Deno.serve(async (req: Request) => {
   // password as part of accepting the invite.
   const siteUrl = Deno.env.get('SITE_URL');
   if (!siteUrl) {
-    return new Response(JSON.stringify({ error: 'SITE_URL is not configured on this function' }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'SITE_URL is not configured on this function' }), { status: 500, headers: corsHeaders });
   }
   const redirectTo = new URL('accept-invite', siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`).toString();
 
@@ -105,11 +109,12 @@ Deno.serve(async (req: Request) => {
   if (inviteErr) {
     return new Response(JSON.stringify({ error: `Staff row created, but invite email failed: ${inviteErr.message}` }), {
       status: 502,
+      headers: corsHeaders,
     });
   }
 
   return new Response(JSON.stringify({ staff: staffRow }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });
