@@ -61,6 +61,7 @@ supabase db seed          # optional: loads supabase/seed.sql for local dev
 supabase functions deploy invite-staff
 supabase functions deploy request-pairing-code
 supabase functions deploy agent-pair
+supabase functions deploy agent-config
 supabase functions deploy ingest-tally-sync
 supabase functions deploy save-credential
 supabase functions deploy reveal-credential
@@ -70,6 +71,27 @@ npm run db:types          # regenerates src/lib/database.types.ts from the live 
 cp .env.example .env      # fill in VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 npm run dev
 ```
+
+### Continuous deployment
+
+`.github/workflows/deploy-supabase.yml` automates the `db push` and
+`functions deploy` steps above — it runs on every push to `main` that
+touches `supabase/migrations/**` or `supabase/functions/**`, or on demand
+via the Actions tab. Requires two more repository secrets beyond the two
+the frontend deploy workflow already needs:
+
+- **`SUPABASE_ACCESS_TOKEN`** — a personal access token from
+  [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
+  not the anon key or service role key.
+- **`SUPABASE_DB_PASSWORD`** — the Postgres database password set when
+  the project was created (Dashboard → Project Settings → Database if
+  you need to look it up or reset it).
+
+The two Edge Function secrets (`CREDENTIAL_ENCRYPTION_KEY`, `SITE_URL`)
+are deliberately **not** part of this workflow — see the comment in
+`deploy-supabase.yml` for why. Those stay a manual, one-time
+`supabase secrets set` from the block above.
+
 
 ### Auth setup
 
