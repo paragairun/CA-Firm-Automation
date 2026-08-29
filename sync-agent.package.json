@@ -1,0 +1,25 @@
+{
+  "name": "practiceos-sync-agent",
+  "version": "0.1.0",
+  "description": "Local Sync Agent — bridges an on-premise Tally Prime instance to PracticeOS (spec §8). Separate codebase from the web app, run on the client's machine, not deployed with it.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "pair": "node dist/pair.js",
+    "start": "node dist/index.js",
+    "dev:pair": "tsx src/pair.ts",
+    "dev:start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.4"
+  }
+}
