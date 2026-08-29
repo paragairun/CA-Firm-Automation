@@ -12,19 +12,23 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { decryptField } from '../_shared/crypto.ts';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 interface RevealPayload {
   credential_id: string;
 }
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -36,7 +40,7 @@ Deno.serve(async (req: Request) => {
     error: userErr,
   } = await callerClient.auth.getUser();
   if (userErr || !user) {
-    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: corsHeaders });
   }
 
   const adminClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -47,17 +51,17 @@ Deno.serve(async (req: Request) => {
     .eq('auth_user_id', user.id)
     .maybeSingle();
   if (callerErr || !callerStaff) {
-    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403, headers: corsHeaders });
   }
 
   let body: RevealPayload;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
   }
   if (!body.credential_id) {
-    return new Response(JSON.stringify({ error: 'credential_id is required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'credential_id is required' }), { status: 400, headers: corsHeaders });
   }
 
   const { data: cred, error: credErr } = await adminClient
@@ -66,13 +70,13 @@ Deno.serve(async (req: Request) => {
     .eq('id', body.credential_id)
     .maybeSingle();
   if (credErr || !cred) {
-    return new Response(JSON.stringify({ error: 'Credential not found' }), { status: 404 });
+    return new Response(JSON.stringify({ error: 'Credential not found' }), { status: 404, headers: corsHeaders });
   }
   if (cred.firm_id !== callerStaff.firm_id) {
-    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }); // don't leak cross-firm existence
+    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: corsHeaders }); // don't leak cross-firm existence
   }
   if (!cred.access_scope.includes(callerStaff.role)) {
-    return new Response(JSON.stringify({ error: 'Your role does not have access to this credential' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Your role does not have access to this credential' }), { status: 403, headers: corsHeaders });
   }
 
   let username: string;
@@ -83,7 +87,7 @@ Deno.serve(async (req: Request) => {
     password = await decryptField(cred.password_encrypted);
     if (cred.otp_secret_encrypted) otpSecret = await decryptField(cred.otp_secret_encrypted);
   } catch (err) {
-    return new Response(JSON.stringify({ error: `Decryption failed: ${(err as Error).message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Decryption failed: ${(err as Error).message}` }), { status: 500, headers: corsHeaders });
   }
 
   await adminClient.from('activity_log').insert({
@@ -96,6 +100,6 @@ Deno.serve(async (req: Request) => {
 
   return new Response(JSON.stringify({ portal_type: cred.portal_type, username, password, otp_secret: otpSecret }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });
