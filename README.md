@@ -56,7 +56,7 @@ per-component.
 npm install
 supabase login
 supabase link --project-ref <your-project-ref>
-supabase db push          # applies migrations 0001–0011
+supabase db push          # applies migrations 0001–0016
 supabase db seed          # optional: loads supabase/seed.sql for local dev
 supabase functions deploy invite-staff
 supabase functions deploy request-pairing-code
@@ -147,6 +147,29 @@ supabase db reset         # applies migrations + seed against the local stack
   underlying queries with `Promise.all` rather than sequentially — each
   card on the page depends on a different table, so there's no reason to
   wait on one before starting the next.
+
+- **A table's own RLS policies should never call a helper that
+  re-queries that same table**, if that helper might run during an
+  `INSERT ... RETURNING`. This bit us for real: `clients_select`
+  originally called the generic `can_access_client()` helper, which —
+  for Admin/Partner/Audit Manager — re-queries `clients` itself to
+  confirm a row's `firm_id`. During `INSERT ... RETURNING`, Postgres
+  implicitly needs the new row to satisfy the table's `SELECT` policy,
+  and a self-referential subquery against the exact table being
+  inserted into isn't reliably able to see that not-yet-committed row at
+  that point — even though the identical check against an
+  already-committed row works perfectly fine. Symptom: every insert
+  failed with a generic `42501` RLS violation, while the row could be
+  proven correct by every other measure (right `firm_id`, right role,
+  policy re-checked and confirmed correct). Fixed in
+  `0015_fix_clients_self_reference.sql` by inlining `clients_select`/
+  `clients_update`'s logic directly instead of routing through
+  `can_access_client()` — no self-reference, no bug.
+  `can_access_client()` itself is still correct and necessary for every
+  *other* table (documents, filings, tasks, ...) that references a
+  `client_id`, since those check a different, already-committed `clients`
+  row, not the row being written in the current statement — the failure
+  mode is specific to a table's policy referencing itself.
 
 - **Bulk resolve simplification**: the spec's §7.3 bulk "mark resolved" is
   gated on every selected row already carrying its own note. The current
