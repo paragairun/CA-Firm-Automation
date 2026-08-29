@@ -411,6 +411,10 @@ export interface Database {
           auth_uid: string | null;
           resolved_staff_role: string | null;
           resolved_firm_id: string | null;
+          trigger_logic_firm_id: string | null;
+          firm_id_check_passes: boolean;
+          role_check_passes: boolean;
+          combined_check_passes: boolean;
           matching_staff_rows: number;
           firm_row_exists: boolean;
         }[];
