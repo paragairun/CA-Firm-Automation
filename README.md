@@ -14,13 +14,13 @@ React + TypeScript (Vite) frontend, Supabase (Postgres + Auth + Storage) backend
 - [x] Typed Supabase client + data-access layer (`src/lib/`)
 - [x] Dashboard page (`src/pages/Dashboard.tsx`) — compliance heatmap, Tally sync health, revenue/outstanding, upcoming deadlines, reconciliation alerts
 - [x] Client List (`src/pages/ClientList.tsx`) — searchable table, links into Client Detail
-- [x] Client Detail View — `ClientDetailShell` (sidebar + header) wrapping nested routes: `ClientOverview` (Tally sync panel, filings timeline, quick stats, open tasks, document summary, per spec §5.2) and `ClientDocuments` (full Document Vault). Credential Vault / Tally Sync / Filings / Tasks / Billing / Activity tabs are still shown but disabled.
+- [x] Client Detail View — `ClientDetailShell` (sidebar + header) wrapping nested routes: `ClientOverview` (Tally sync panel, filings timeline, quick stats, open tasks, document summary, per spec §5.2), `ClientDocuments`, `ClientCredentials`, `ClientTallySync` (ledger explorer), `ClientFilings`, `ClientTasks` (inline status change), `ClientBilling` (invoices + time logged). Activity is the only tab still disabled.
 - [x] Client-side routing (`react-router-dom`) via a shared `AppShell` — Dashboard / Clients / Team nav, unbuilt routes fall back to a "coming soon" stub instead of a dead link
 - [x] Reconciliation Center (spec §7) — Summary Grid (`ReconciliationCenter.tsx`, period switcher) + Line-Item Detail (`ReconciliationDetail.tsx`, status tabs, expandable rows, resolve/escalate/create-task, bulk actions)
 - [x] Auth wiring — Admin/Partner invites staff via a `Team` page → Edge Function → Supabase Auth invite email → `staff.auth_user_id` links automatically on signup (DB trigger, both directions), no manual linking step anywhere
 - [x] Ingestion API — `request-pairing-code` → `agent-pair` → `ingest-tally-sync` Edge Functions (spec §3.3 steps 1–6), token-based agent auth, idempotent upserts into `tally_ledgers`/`tally_vouchers`; "Connect Tally" button on Client Detail generates a real pairing code
 - [x] Document Vault storage — private `client-documents` bucket, path-based RLS (`can_access_client()` applied to the path's client_id segment via a cast-safe helper), upload/list/signed-URL-download/role-gated-delete
-- [ ] Credential Vault / Tally Sync / Filings / Tasks / Billing / Activity tabs on Client Detail (sidebar links to them; pages not built)
+- [ ] Activity tab on Client Detail — no unified audit-log table exists yet; would need a new table + triggers to populate it meaningfully rather than faking one
 - [ ] Sync Agent — Windows service (spec §8)
 - [ ] GSTR-2B reconciliation matching logic (spec §4.1) — needs credentials vault decryption + GST portal API access
 
@@ -177,12 +177,19 @@ supabase db reset         # applies migrations + seed against the local stack
   row with `version: 1` rather than incrementing an existing document's
   version — re-uploading a file with the same name creates a second
   independent row rather than a new version of the first.
+- **Credential Vault tab is read-only by design, not by omission**: it
+  shows which portals have credentials on file (portal type, last
+  verified, which roles can see it) but has no add/edit form. Building
+  one would mean either sending real secrets through the browser to a
+  ciphertext column with no real encryption behind it yet, or building a
+  fake form that looks secure and isn't — both worse than not having the
+  form. Add it once the KMS-backed encryption from the spec (§6) actually
+  exists.
 
 ## Next steps
-The Credential Vault, Tally Sync, Filings, Tasks, Billing, and Activity
-tabs on Client Detail are still disabled placeholders — Filings and Tasks
-are probably the easiest next wins since the underlying queries already
-exist (`getClientDetail()` already fetches both). Beyond that, the two
-largest unbuilt pieces are the actual Sync Agent (a separate codebase per
-spec §8) and the GSTR-2B reconciliation matching logic (§4.1), which
+The Activity tab is the one remaining disabled tab on Client Detail — it
+needs a real audit-log table and triggers to populate it before it's
+worth building, rather than a page that fakes an activity feed. Beyond
+that, the two largest unbuilt pieces are the actual Sync Agent (a separate
+codebase per spec §8) and the GSTR-2B reconciliation matching logic (§4.1), which
 depends on decrypting and calling out to the GST portal via the credentials vault.
