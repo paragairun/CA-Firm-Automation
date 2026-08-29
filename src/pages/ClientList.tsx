@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { listClients, createClient, type Client, type NewClientInput } from '../lib/queries';
+import { supabase } from '../lib/supabaseClient';
 
 const entityLabels: Record<string, string> = {
   individual: 'Individual',
@@ -53,7 +54,21 @@ export function ClientList() {
       // etc.), not staring at the list again.
       navigate(`/clients/${created.id}`);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create client.');
+      const baseMessage = err instanceof Error ? err.message : 'Failed to create client.';
+      // Temporary diagnostic (migration 0012) — reports exactly what the
+      // RLS policy saw for this session, appended right in the error so
+      // there's no separate step to run it manually.
+      try {
+        const { data: debugRows } = await supabase.rpc('debug_client_insert_context');
+        const debug = debugRows?.[0];
+        setFormError(
+          debug
+            ? `${baseMessage} — debug: role=${debug.resolved_staff_role ?? 'null'}, firm_id=${debug.resolved_firm_id ?? 'null'}, matching_staff_rows=${debug.matching_staff_rows}, firm_exists=${debug.firm_row_exists}`
+            : baseMessage
+        );
+      } catch {
+        setFormError(baseMessage);
+      }
     } finally {
       setCreating(false);
     }
