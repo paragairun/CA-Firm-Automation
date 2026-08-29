@@ -4,7 +4,9 @@ CA/tax-firm practice management SaaS with native Tally Prime integration.
 Full functional spec: see `ca-saas-platform-spec-v1.1.md` (delivered separately).
 
 ## Stack
-React + TypeScript (Vite) frontend, Supabase (Postgres + Auth + Storage) backend.
+React + TypeScript (Vite) frontend, Supabase (Postgres + Auth + Storage +
+Edge Functions) backend, plus a separate Node.js/TypeScript package
+(`sync-agent/`) that runs on a client's machine — see its own README.
 
 ## Status
 - [x] Core schema (`supabase/migrations/0001_init_schema.sql`) — all entities from the spec §2
@@ -20,9 +22,10 @@ React + TypeScript (Vite) frontend, Supabase (Postgres + Auth + Storage) backend
 - [x] Auth wiring — Admin/Partner invites staff via a `Team` page → Edge Function → Supabase Auth invite email → `staff.auth_user_id` links automatically on signup (DB trigger, both directions), no manual linking step anywhere
 - [x] Ingestion API — `request-pairing-code` → `agent-pair` → `ingest-tally-sync` Edge Functions (spec §3.3 steps 1–6), token-based agent auth, idempotent upserts into `tally_ledgers`/`tally_vouchers`; "Connect Tally" button on Client Detail generates a real pairing code
 - [x] Document Vault storage — private `client-documents` bucket, path-based RLS (`can_access_client()` applied to the path's client_id segment via a cast-safe helper), upload/list/signed-URL-download/role-gated-delete
-- [ ] Activity tab on Client Detail — no unified audit-log table exists yet; would need a new table + triggers to populate it meaningfully rather than faking one
-- [ ] Sync Agent — Windows service (spec §8)
-- [ ] GSTR-2B reconciliation matching logic (spec §4.1) — needs credentials vault decryption + GST portal API access
+- [x] GSTR-2B reconciliation matching (spec §4.1) — `gstr2b_line_items` staging table + `run_gstr2b_reconciliation()` set-based matching function, JSON import UI on the Reconciliation Detail page. NOT a live GST portal integration — see design notes below for why and what that means for the matching accuracy.
+- [x] Activity tab on Client Detail — scoped `activity_log` table populated by triggers on filing/task status changes, document uploads, and reconciliation resolutions (not a full audit trail — see design notes)
+- [x] Credential Vault write/reveal — `save-credential` and `reveal-credential` Edge Functions encrypt/decrypt with AES-256-GCM server-side; add form + gated, logged, auto-hiding reveal UI (spec §6, with a real caveat — see design notes)
+- [x] Sync Agent (spec §8) — `sync-agent/` (separate Node.js/TypeScript package): pairing CLI, Tally XML client, local encrypted-at-rest config, file-based persistent queue with backoff, cloud uplink with heartbeat. XML request/response parsing verified against a hand-built mock Tally server (not a real instance — see `sync-agent/README.md` for exactly what that does and doesn't confirm). New `agent-config` Edge Function so the agent can pick up server-side company binding without re-pairing.
 
 ## Dashboard design
 
@@ -53,12 +56,15 @@ per-component.
 npm install
 supabase login
 supabase link --project-ref <your-project-ref>
-supabase db push          # applies migrations 0001–0006
+supabase db push          # applies migrations 0001–0008
 supabase db seed          # optional: loads supabase/seed.sql for local dev
 supabase functions deploy invite-staff
 supabase functions deploy request-pairing-code
 supabase functions deploy agent-pair
 supabase functions deploy ingest-tally-sync
+supabase functions deploy save-credential
+supabase functions deploy reveal-credential
+supabase secrets set CREDENTIAL_ENCRYPTION_KEY=$(openssl rand -base64 32)
 npm run db:types          # regenerates src/lib/database.types.ts from the live schema
 cp .env.example .env      # fill in VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 npm run dev
@@ -177,19 +183,87 @@ supabase db reset         # applies migrations + seed against the local stack
   row with `version: 1` rather than incrementing an existing document's
   version — re-uploading a file with the same name creates a second
   independent row rather than a new version of the first.
-- **Credential Vault tab is read-only by design, not by omission**: it
-  shows which portals have credentials on file (portal type, last
-  verified, which roles can see it) but has no add/edit form. Building
-  one would mean either sending real secrets through the browser to a
-  ciphertext column with no real encryption behind it yet, or building a
-  fake form that looks secure and isn't — both worse than not having the
-  form. Add it once the KMS-backed encryption from the spec (§6) actually
-  exists.
+- **Credential Vault is write-capable, with a specific caveat.**
+  `save-credential` and `reveal-credential` Edge Functions encrypt/decrypt
+  with AES-256-GCM using a **single shared symmetric key** held as an Edge
+  Function secret (`CREDENTIAL_ENCRYPTION_KEY`) — see
+  `supabase/functions/_shared/crypto.ts`. That's a real step up from
+  plaintext, but it is **not** the spec's full picture (§6: "keys managed
+  via KMS with per-tenant key separation"). One key protects every firm's
+  credentials on the deployment; a leaked key exposes all of them at once,
+  not just one firm's. A genuine production upgrade moves key custody to
+  a real KMS (AWS KMS, GCP KMS, or Supabase Vault) with one key per firm.
+  Generate the current key with `openssl rand -base64 32` and set it with
+  `supabase secrets set CREDENTIAL_ENCRYPTION_KEY=<value>`.
+- **Reveal is gated, logged, and time-boxed.** `reveal-credential` checks
+  the caller's role against that row's `access_scope`, confirms the
+  credential belongs to the caller's own firm (checked explicitly — the
+  service-role client bypasses RLS, so this can't rely on the database to
+  enforce it), and logs every successful reveal to `activity_log`. The
+  UI auto-hides a revealed credential after 30 seconds and never persists
+  it beyond the component's in-memory state.
 
-## Next steps
-The Activity tab is the one remaining disabled tab on Client Detail — it
-needs a real audit-log table and triggers to populate it before it's
-worth building, rather than a page that fakes an activity feed. Beyond
-that, the two largest unbuilt pieces are the actual Sync Agent (a separate
-codebase per spec §8) and the GSTR-2B reconciliation matching logic (§4.1), which
-depends on decrypting and calling out to the GST portal via the credentials vault.
+- **GSTR-2B matching is NOT a live portal integration.** Calling the real
+  GSTN API requires registering as a GSP/ASP and credentials this project
+  doesn't have — that's a separate, larger effort regardless of how the
+  credentials vault is secured. Instead, `gstr2b_line_items` is a staging
+  table any import path can populate; right now that's a manual JSON
+  upload (`ReconciliationDetail.tsx`, "Import GSTR-2B") in a shape this
+  project defines itself — **not** the government portal's actual export
+  format. A real deployment needs an adapter that maps the portal's raw
+  JSON/Excel export into this shape before upload.
+- **Matching key is invoice number only, not GSTIN + invoice number.**
+  `tally_vouchers` has no supplier-GSTIN column — that lives on the
+  ledger master, and this schema doesn't join voucher → ledger → GSTIN
+  yet. `run_gstr2b_reconciliation()` matches on invoice number alone,
+  scoped to one client + one month, which is a reasonable approximation
+  (duplicate invoice numbers across different suppliers in the same
+  month-client are uncommon) but is a real simplification of the spec's
+  algorithm — see the migration's comments for the full reasoning.
+- **Re-running reconciliation preserves resolved/escalated rows.** The
+  matching function only deletes and regenerates rows still in an open
+  state (`matched`/`mismatch`/`missing_in_tally`/`missing_in_portal`/
+  `under_review`) for that client+period — a CA's completed resolution
+  work isn't wiped out by a re-import.
+
+- **Activity log is scoped, not comprehensive.** Four table triggers
+  cover filing status changes, task status changes, document uploads, and
+  reconciliation resolutions; credential save/reveal events are logged
+  separately, directly by their Edge Functions (see above) — together
+  these satisfy the spirit of the spec's access-logging requirement (§6)
+  for credentials specifically, but the log as a whole still isn't a
+  comprehensive audit trail of every write to every table.
+
+- **Sync Agent is a separate Node.js package (`sync-agent/`), not part of
+  the web app's build or deploy.** Its request-building and response-
+  parsing logic (`tally-client.ts`) was verified against a hand-built mock
+  Tally server in this repo, confirming the code itself runs correctly —
+  it was **not** verified against a real Tally Prime installation, since
+  none was available. The file's header comment flags exactly which
+  assumptions (XML tag names, balance-sign convention) are most likely to
+  need adjustment once it's run against actual Tally output. See
+  `sync-agent/README.md` for the full breakdown of what's tested vs. not,
+  and for two known gaps: no dedicated web-app UI yet for binding an
+  agent to a Tally company after pairing (works, just requires a manual
+  DB row today), and no Windows-service wrapper included (documented
+  as a `node-windows`/NSSM setup step, not shipped).
+
+## Current state
+Every component named in the original spec now has a working
+implementation somewhere in this repo. What's left is less about missing
+features and more about the caveats called out throughout this file —
+worth reading before treating any of them as production-ready as-is:
+
+- The Credential Vault's single shared encryption key vs. the spec's
+  per-firm KMS separation.
+- GSTR-2B matching by invoice number alone, and its manual-JSON-import
+  staging step in place of a real GSP/portal integration.
+- The Sync Agent's Tally XML parsing, unverified against a real instance.
+- The Activity log's intentionally scoped (not comprehensive) coverage.
+- No company-binding UI, no Windows-service wrapper, no system-tray
+  companion app.
+
+None of these are silent gaps — each is flagged in code comments and in
+this README at the point where it matters, so picking any one up next
+means reading one paragraph, not re-deriving what was simplified and why.
+
