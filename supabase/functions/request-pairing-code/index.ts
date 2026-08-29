@@ -6,15 +6,19 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { generatePairingCode } from '../_shared/tokens.ts';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), { status: 401, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -28,7 +32,7 @@ Deno.serve(async (req: Request) => {
     error: userErr,
   } = await callerClient.auth.getUser();
   if (userErr || !user) {
-    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: corsHeaders });
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
@@ -39,20 +43,20 @@ Deno.serve(async (req: Request) => {
     .eq('auth_user_id', user.id)
     .maybeSingle();
   if (callerErr || !callerStaff) {
-    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Caller has no staff record' }), { status: 403, headers: corsHeaders });
   }
   if (!['admin', 'partner', 'audit_manager'].includes(callerStaff.role)) {
-    return new Response(JSON.stringify({ error: 'Insufficient permissions' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Insufficient permissions' }), { status: 403, headers: corsHeaders });
   }
 
   let body: { client_id?: string };
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
   }
   if (!body.client_id) {
-    return new Response(JSON.stringify({ error: 'client_id is required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'client_id is required' }), { status: 400, headers: corsHeaders });
   }
 
   // Confirm the client belongs to the caller's firm before issuing a code
@@ -66,7 +70,7 @@ Deno.serve(async (req: Request) => {
     .eq('firm_id', callerStaff.firm_id)
     .maybeSingle();
   if (clientErr || !client) {
-    return new Response(JSON.stringify({ error: 'Client not found in your firm' }), { status: 404 });
+    return new Response(JSON.stringify({ error: 'Client not found in your firm' }), { status: 404, headers: corsHeaders });
   }
 
   const code = generatePairingCode();
@@ -82,8 +86,8 @@ Deno.serve(async (req: Request) => {
     .single();
 
   if (insertErr) {
-    return new Response(JSON.stringify({ error: `Failed to create pairing code: ${insertErr.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Failed to create pairing code: ${insertErr.message}` }), { status: 500, headers: corsHeaders });
   }
 
-  return new Response(JSON.stringify(pairing), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify(pairing), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
