@@ -1,0 +1,47 @@
+name: Deploy to Supabase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/functions/**'
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false # never cancel a migration mid-apply
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+  # Project ref isn't sensitive — it's already visible in every Supabase
+  # URL this project uses — so it's hardcoded rather than a secret.
+  PROJECT_ID: wlmjdqxdlmltuesvkien
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - run: supabase link --project-ref $PROJECT_ID
+
+      - name: Push database migrations
+        run: supabase db push
+
+      - name: Deploy all Edge Functions
+        run: supabase functions deploy --project-ref $PROJECT_ID
+
+      # Deliberately NOT here: `supabase secrets set ...` for
+      # CREDENTIAL_ENCRYPTION_KEY or SITE_URL. Those are long-lived,
+      # stable values — CREDENTIAL_ENCRYPTION_KEY in particular decrypts
+      # every credential already saved in the vault, so an accidental
+      # value change (a stale GitHub secret, a copy-paste slip) would
+      # silently break decryption of real data. Setting Edge Function
+      # secrets stays a deliberate, manual, one-time CLI step — see
+      # README's "Getting started" section.
