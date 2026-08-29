@@ -9,6 +9,11 @@ import { Dashboard } from './pages/Dashboard';
 import { ClientList } from './pages/ClientList';
 import { ClientOverview } from './pages/ClientOverview';
 import { ClientDocuments } from './pages/ClientDocuments';
+import { ClientCredentials } from './pages/ClientCredentials';
+import { ClientTallySync } from './pages/ClientTallySync';
+import { ClientFilings } from './pages/ClientFilings';
+import { ClientTasks } from './pages/ClientTasks';
+import { ClientBilling } from './pages/ClientBilling';
 import { ReconciliationCenter } from './pages/ReconciliationCenter';
 import { ReconciliationDetail } from './pages/ReconciliationDetail';
 import { Team } from './pages/Team';
@@ -29,6 +34,11 @@ export function App() {
               <Route path="/clients/:id" element={<ClientDetailShell />}>
                 <Route index element={<ClientOverview />} />
                 <Route path="documents" element={<ClientDocuments />} />
+                <Route path="credentials" element={<ClientCredentials />} />
+                <Route path="tally-sync" element={<ClientTallySync />} />
+                <Route path="filings" element={<ClientFilings />} />
+                <Route path="tasks" element={<ClientTasks />} />
+                <Route path="billing" element={<ClientBilling />} />
               </Route>
               <Route path="/team" element={<Team />} />
               <Route path="/tally" element={<ComingSoon title="Tally Integration Hub" />} />
