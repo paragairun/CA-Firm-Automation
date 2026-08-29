@@ -405,24 +405,6 @@ export interface Database {
           missing_in_portal_count: number;
         }[];
       };
-      debug_client_insert_context: {
-        Args: Record<string, never>;
-        Returns: {
-          auth_uid: string | null;
-          resolved_staff_role: string | null;
-          resolved_firm_id: string | null;
-          trigger_logic_firm_id: string | null;
-          firm_id_check_passes: boolean;
-          role_check_passes: boolean;
-          combined_check_passes: boolean;
-          matching_staff_rows: number;
-          firm_row_exists: boolean;
-        }[];
-      };
-      test_create_client: {
-        Args: { p_entity_type: EntityType; p_legal_name: string };
-        Returns: Database['public']['Tables']['clients']['Row'];
-      };
     };
     Enums: Record<string, never>;
   };
