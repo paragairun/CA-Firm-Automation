@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../lib/auth';
+import { getFirmName } from '../../lib/queries';
 
-export function AppShell({ firmName = 'Demo & Associates' }: { firmName?: string }) {
+export function AppShell() {
   const { staff, signOut } = useAuth();
+  const [firmName, setFirmName] = useState<string | null>(null);
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
     day: '2-digit',
@@ -10,11 +13,27 @@ export function AppShell({ firmName = 'Demo & Associates' }: { firmName?: string
     year: 'numeric',
   });
 
+  useEffect(() => {
+    if (!staff) return;
+    let cancelled = false;
+    getFirmName(staff.firm_id)
+      .then((name) => {
+        if (!cancelled) setFirmName(name);
+      })
+      .catch(() => {
+        // Non-critical — fall back to a generic label rather than blocking the page.
+        if (!cancelled) setFirmName('PracticeOS');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [staff]);
+
   return (
     <div className="page">
       <header className="masthead">
         <div className="masthead__left">
-          <h1 className="masthead__firm">{firmName}</h1>
+          <h1 className="masthead__firm">{firmName ?? '\u00A0'}</h1>
           <nav className="masthead__nav">
             <NavLink to="/" end className={({ isActive }) => `masthead__nav-link${isActive ? ' masthead__nav-link--active' : ''}`}>
               Dashboard
