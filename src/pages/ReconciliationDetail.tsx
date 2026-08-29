@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   getClient,
@@ -10,6 +10,7 @@ import {
   getCurrentStaffId,
   type ReconciliationLineItem,
 } from '../lib/queries';
+import { importGstr2bLineItems, runGstr2bReconciliation } from '../lib/gstr2b';
 
 type FilterTab = 'all' | 'mismatch' | 'missing_in_tally' | 'missing_in_portal' | 'resolved' | 'matched';
 
@@ -48,6 +49,9 @@ export function ReconciliationDetail() {
   const [bulkNote, setBulkNote] = useState('');
   const [showBulkNoteInput, setShowBulkNoteInput] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     if (!clientId) return;
@@ -159,6 +163,33 @@ export function ReconciliationDetail() {
     }
   }
 
+  async function handleImport() {
+    const file = fileInputRef.current?.files?.[0];
+    if (!clientId || !file) return;
+    setImportBusy(true);
+    setImportResult(null);
+    setError(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const staffId = await getCurrentStaffId();
+      if (!staffId) throw new Error('No signed-in staff account found.');
+      const importedCount = await importGstr2bLineItems(clientId, period, parsed, staffId);
+      const result = await runGstr2bReconciliation(clientId, period);
+      setImportResult(
+        `Imported ${importedCount} line item${importedCount === 1 ? '' : 's'}. ` +
+          `Matched ${result.matched_count} · Mismatch ${result.mismatch_count} · ` +
+          `Missing in Tally ${result.missing_in_tally_count} · Missing in portal ${result.missing_in_portal_count}.`
+      );
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Import failed.');
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   return (
     <div className="content" style={{ maxWidth: 1100 }}>
       <Link className="card__link" to="/tally/reconciliation">
@@ -170,6 +201,25 @@ export function ReconciliationDetail() {
         <span className="mono" style={{ color: 'var(--ink-soft)', fontSize: 13 }}>
           {period}
         </span>
+      </div>
+
+      <div className="card invite-form">
+        <h2 className="card__title" style={{ marginBottom: 'var(--space-2)', fontSize: 14 }}>
+          Import GSTR-2B for {period}
+        </h2>
+        <p style={{ fontSize: 12, color: 'var(--ink-faint)', margin: '0 0 var(--space-3)' }}>
+          Upload a JSON file: an array of {'{'}supplier_gstin, invoice_number, invoice_date, taxable_value,
+          tax_amount{'}'}. This isn't the government portal's raw export format — map that to this shape first
+          (see README). Re-uploading replaces the previous import for this period and re-runs matching against
+          Tally purchase vouchers.
+        </p>
+        <div className="invite-form__row">
+          <input ref={fileInputRef} type="file" accept="application/json" />
+          <button className="btn-link" type="button" disabled={importBusy} onClick={handleImport}>
+            {importBusy ? 'Importing…' : 'Import & reconcile'}
+          </button>
+        </div>
+        {importResult && <p style={{ fontSize: 12, color: 'var(--good)', marginTop: 'var(--space-2)' }}>{importResult}</p>}
       </div>
 
       <div className="recon-tabs">
