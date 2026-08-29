@@ -28,6 +28,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { sha256Hex } from '../_shared/tokens.ts';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 interface LedgerPayload {
   ledger_name: string;
@@ -55,14 +56,17 @@ interface IngestBody {
 }
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get('Authorization');
   const token = authHeader?.replace(/^Bearer\s+/i, '');
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Missing bearer token' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Missing bearer token' }), { status: 401, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -77,7 +81,7 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (tokenErr || !tokenRow) {
-    return new Response(JSON.stringify({ error: 'Invalid or revoked token' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Invalid or revoked token' }), { status: 401, headers: corsHeaders });
   }
   const agentId = tokenRow.agent_id;
 
@@ -92,10 +96,10 @@ Deno.serve(async (req: Request) => {
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
   }
   if (!body.sync_config_id) {
-    return new Response(JSON.stringify({ error: 'sync_config_id is required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'sync_config_id is required' }), { status: 400, headers: corsHeaders });
   }
 
   const { data: syncConfig, error: syncConfigErr } = await adminClient
@@ -105,12 +109,12 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (syncConfigErr || !syncConfig) {
-    return new Response(JSON.stringify({ error: 'Unknown sync_config_id' }), { status: 404 });
+    return new Response(JSON.stringify({ error: 'Unknown sync_config_id' }), { status: 404, headers: corsHeaders });
   }
   if (syncConfig.agent_id !== agentId) {
     // This agent's token is valid, but not for this sync config — refuse
     // rather than silently writing data under the wrong client/company.
-    return new Response(JSON.stringify({ error: 'This agent is not paired to that sync_config_id' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'This agent is not paired to that sync_config_id' }), { status: 403, headers: corsHeaders });
   }
 
   const errors: string[] = [];
@@ -187,6 +191,6 @@ Deno.serve(async (req: Request) => {
 
   return new Response(JSON.stringify({ status, ledgers_written: ledgersWritten, vouchers_written: vouchersWritten, errors }), {
     status: errors.length && ledgersWritten + vouchersWritten === 0 ? 422 : 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });
