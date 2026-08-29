@@ -10,20 +10,24 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { generateToken, sha256Hex } from '../_shared/tokens.ts';
+import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 
 Deno.serve(async (req: Request) => {
+  const preflight = handleCorsPreflight(req);
+  if (preflight) return preflight;
+
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   let body: { code?: string; machine_fingerprint?: string; agent_version?: string };
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
   }
   if (!body.code) {
-    return new Response(JSON.stringify({ error: 'code is required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'code is required' }), { status: 400, headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -36,13 +40,13 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (pairingErr || !pairing) {
-    return new Response(JSON.stringify({ error: 'Invalid pairing code' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Invalid pairing code' }), { status: 400, headers: corsHeaders });
   }
   if (pairing.used_at) {
-    return new Response(JSON.stringify({ error: 'Pairing code already used' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Pairing code already used' }), { status: 400, headers: corsHeaders });
   }
   if (new Date(pairing.expires_at) < new Date()) {
-    return new Response(JSON.stringify({ error: 'Pairing code expired' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Pairing code expired' }), { status: 400, headers: corsHeaders });
   }
 
   // Mark the code used first — if anything below fails, the code is
@@ -54,7 +58,7 @@ Deno.serve(async (req: Request) => {
     .eq('id', pairing.id)
     .is('used_at', null);
   if (consumeErr) {
-    return new Response(JSON.stringify({ error: 'Failed to consume pairing code' }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'Failed to consume pairing code' }), { status: 500, headers: corsHeaders });
   }
 
   const installId = crypto.randomUUID();
@@ -73,7 +77,7 @@ Deno.serve(async (req: Request) => {
     .single();
 
   if (agentErr) {
-    return new Response(JSON.stringify({ error: `Failed to register agent: ${agentErr.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Failed to register agent: ${agentErr.message}` }), { status: 500, headers: corsHeaders });
   }
 
   const rawToken = generateToken();
@@ -84,11 +88,11 @@ Deno.serve(async (req: Request) => {
     token_hash: tokenHash,
   });
   if (tokenErr) {
-    return new Response(JSON.stringify({ error: `Failed to issue token: ${tokenErr.message}` }), { status: 500 });
+    return new Response(JSON.stringify({ error: `Failed to issue token: ${tokenErr.message}` }), { status: 500, headers: corsHeaders });
   }
 
   return new Response(
     JSON.stringify({ agent_id: agent.id, client_id: pairing.client_id, token: rawToken }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   );
 });
