@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { listClients, createClient, type Client, type NewClientInput } from '../lib/queries';
+import { listClients, createClient, testCreateClientViaRpc, type Client, type NewClientInput } from '../lib/queries';
 import { supabase } from '../lib/supabaseClient';
 
 const entityLabels: Record<string, string> = {
@@ -25,6 +25,8 @@ export function ClientList() {
   const [pan, setPan] = useState('');
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [rpcTestBusy, setRpcTestBusy] = useState(false);
+  const [rpcTestResult, setRpcTestResult] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -71,6 +73,19 @@ export function ClientList() {
       }
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleRpcTest() {
+    setRpcTestBusy(true);
+    setRpcTestResult(null);
+    try {
+      const result = await testCreateClientViaRpc(entityType, `${legalName || 'RPC test'} (via RPC)`);
+      setRpcTestResult(`RPC insert succeeded — id: ${result.id}, firm_id: ${result.firm_id}`);
+    } catch (err) {
+      setRpcTestResult(`RPC insert failed — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRpcTestBusy(false);
     }
   }
 
@@ -139,6 +154,16 @@ export function ClientList() {
             </button>
           </div>
           {formError && <p style={{ color: 'var(--bad)', fontSize: 13, marginTop: 'var(--space-2)' }}>{formError}</p>}
+          <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-3)', borderTop: '1px dashed var(--paper-line)' }}>
+            <button className="btn-link" type="button" disabled={rpcTestBusy} onClick={handleRpcTest}>
+              {rpcTestBusy ? 'Testing…' : 'Debug: try insert via RPC instead'}
+            </button>
+            {rpcTestResult && (
+              <p style={{ fontSize: 12, color: rpcTestResult.startsWith('RPC insert succeeded') ? 'var(--good)' : 'var(--bad)', marginTop: 'var(--space-2)' }}>
+                {rpcTestResult}
+              </p>
+            )}
+          </div>
         </form>
       )}
 
